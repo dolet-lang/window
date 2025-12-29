@@ -1,0 +1,16 @@
+# Window Module Metadata
+# Native Windows API bindings for window creation and management
+
+[info]
+name = window
+version = 1.0.0
+description = Native Windows API bindings for window creation, input handling, and timing
+
+[libs]
+# No external libraries needed - uses Windows system DLLs
+
+[dlls]
+# No runtime DLLs to copy - uses Windows system DLLs (user32.dll, kernel32.dll)
+
+[dependencies]
+# No external dependencies
