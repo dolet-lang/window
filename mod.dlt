@@ -3,32 +3,39 @@
 # ============================
 # High-performance native window library for Win32
 # Replacement for GLFW in Qubic/Kati engine
-#
-# This is the entry point file (lib.dlt) that imports all components
+module window
+load window/types
+load window/constants
+load window/user32
+load window/kernel32
+load window/vulkan_surface
+load window/timing
+load window/win_core
 
-# Import all library components
-import types
-import constants
-import user32
-import kernel32
-import vulkan_surface
-import timing
-import win_core
+# Exported structs
+export POINT
+export RECT
+export MSG
+export WNDCLASSEXW
+export LARGE_INTEGER
+export TimeState
+export VkWin32SurfaceCreateInfoKHR
+export Window
 
-"""
-// للـ GUI apps (أقل CPU)
-while !win.should_close():
-    win.wait_events()  // CPU ~0%
+# Exported functions — timing
+export init_time
+export update_time
+export get_delta_time
+export get_fps
+export get_elapsed_time
+export get_frame_count
+export reset_time
+export get_time
 
-// للـ games مع frame rate محدد
-while !win.should_close():
-    win.wait_events_timeout(16)  // ~60fps، CPU منخفض
-    render()
-
-// للـ games مع vsync (الحالي)
-while !win.should_close():
-    win.poll_events()  // مع vsync، الـ swap buffer يعمل sync
-    render()
-    swap_buffers()  // هذا يعمل blocking
-"""
-
+# Exported functions — window/cursor
+export WndProc
+export set_cursor_visible
+export is_cursor_visible
+export set_cursor_locked
+export is_cursor_locked
+export set_cursor_position
