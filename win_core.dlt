@@ -7,51 +7,6 @@
 # NOTE: Input handling has been moved to the standalone Input Library.
 # Use "import input" for keyboard and mouse input functions.
 
-# ----- Vulkan Surface Extern Functions -----
-extern lib "vulkan-1":
-    fun vkCreateWin32SurfaceKHR(instance: i64, pCreateInfo: i64, pAllocator: i64, pSurface: i64) -> i32
-    fun vkDestroySurfaceKHR(instance: i64, surface: i64, pAllocator: i64) -> i32
-
-# ----- VkWin32SurfaceCreateInfoKHR Structure -----
-struct VkWin32SurfaceCreateInfoKHR:
-    sType: i32 = 1000009000
-    padding1: i32 = 0
-    pNext: i64 = 0
-    flags: i32 = 0
-    padding2: i32 = 0
-    hinstance: i64 = 0
-    hwnd: i64 = 0
-
-# ----- Global Resize Callback -----
-g_resize_callback: i64 = 0
-g_resize_callback_data: i64 = 0
-
-# ----- Win32 Extern Functions -----
-extern lib "user32":
-    fun RegisterClassExA(lpWndClass: i64) -> i16
-    fun UnregisterClassA(lpClassName: i64, hInstance: i64) -> i32
-    fun CreateWindowExA(dwExStyle: i32, lpClassName: i64, lpWindowName: i64, dwStyle: i32, x: i32, y: i32, nWidth: i32, nHeight: i32, hWndParent: i64, hMenu: i64, hInstance: i64, lpParam: i64) -> i64
-    fun DestroyWindow(hWnd: i64) -> i32
-    fun ShowWindow(hWnd: i64, nCmdShow: i32) -> i32
-    fun SetWindowTextA(hWnd: i64, lpString: i64) -> i32
-    fun SetWindowPos(hWnd: i64, hWndInsertAfter: i64, X: i32, Y: i32, cx: i32, cy: i32, uFlags: i32) -> i32
-    fun GetClientRect(hWnd: i64, lpRect: i64) -> i32
-    fun DefWindowProcA(hWnd: i64, Msg: i32, wParam: i64, lParam: i64) -> i64
-    fun LoadCursorA(hInstance: i64, lpCursorName: i64) -> i64
-    fun GetLastError() -> i32
-    fun PeekMessageA(lpMsg: i64, hWnd: i64, wMsgFilterMin: i32, wMsgFilterMax: i32, wRemoveMsg: i32) -> i32
-    fun TranslateMessage(lpMsg: i64) -> i32
-    fun DispatchMessageA(lpMsg: i64) -> i64
-    fun ShowCursor(bShow: i32) -> i32
-    fun ClipCursor(lpRect: i64) -> i32
-    fun SetCursorPos(X: i32, Y: i32) -> i32
-    fun GetWindowRect(hWnd: i64, lpRect: i64) -> i32
-    fun WaitMessage() -> i32
-    fun MsgWaitForMultipleObjects(nCount: i32, pHandles: i64, fWaitAll: i32, dwMilliseconds: i32, dwWakeMask: i32) -> i32
-
-extern lib "kernel32":
-    fun GetModuleHandleA(lpModuleName: i64) -> i64
-
 # ----- Global Error State -----
 g_last_error: i32 = 0
 g_win32_error: i32 = 0
@@ -116,21 +71,30 @@ struct Window:
     is_focused: i32 = 1
     vulkan_surface: i64 = 0
 
+# Helper: Create empty Window
+fun make_empty_window() -> Window:
+    return Window(handle=0 as i64, hinstance=0 as i64, width=0, height=0, should_close_flag=0, is_resized=0, is_focused=1, vulkan_surface=0 as i64)
+
+# Helper: Create empty WNDCLASSEXW with proper types
+fun make_empty_wndclassexw() -> WNDCLASSEXW:
+    w: WNDCLASSEXW = WNDCLASSEXW(cbSize=80, style=0, lpfnWndProc=0 as i64, cbClsExtra=0, cbWndExtra=0, hInstance=0 as i64, hIcon=0 as i64, hCursor=0 as i64, hbrBackground=0 as i64, lpszMenuName=0 as i64, lpszClassName=0 as i64, hIconSm=0 as i64)
+    return w
+
 # ----- Window Implementation -----
 imple Window:
     static fun create(title: str, width: i32, height: i32) -> Window:
         if width <= 0 or height <= 0:
             g_last_error = WINDOW_ERROR_INVALID_PARAMETER
-            return Window()
-        
+            return make_empty_window()
+
         hinstance: i64 = GetModuleHandleA(0)
         if hinstance == 0:
             g_last_error = WINDOW_ERROR_CREATE_WINDOW
             g_win32_error = GetLastError()
-            return Window()
-        
+            return make_empty_window()
+
         if g_class_registered == 0:
-            wc: WNDCLASSEXW = WNDCLASSEXW()
+            wc: WNDCLASSEXW = WNDCLASSEXW(cbSize=80, style=0, lpfnWndProc=0 as i64, cbClsExtra=0, cbWndExtra=0, hInstance=0 as i64, hIcon=0 as i64, hCursor=0 as i64, hbrBackground=0 as i64, lpszMenuName=0 as i64, lpszClassName=0 as i64, hIconSm=0 as i64)
             wc.cbSize = 80
             wc.style = CS_HREDRAW | CS_VREDRAW | CS_OWNDC
             wc.lpfnWndProc = WndProc as i64
@@ -144,49 +108,27 @@ imple Window:
             class_name: str = "DoletWindow"
             wc.lpszClassName = class_name as i64
             wc.hIconSm = 0
-            
+
             atom: i16 = RegisterClassExA(wc as i64)
             if atom == 0:
                 g_last_error = WINDOW_ERROR_REGISTER_CLASS
                 g_win32_error = GetLastError()
-                return Window()
+                return make_empty_window()
             
             g_class_registered = 1
         
         style: i32 = WS_OVERLAPPEDWINDOW | WS_VISIBLE
         class_name_ptr: str = "DoletWindow"
-        
-        hwnd: i64 = CreateWindowExA(
-            0,
-            class_name_ptr as i64,
-            title as i64,
-            style,
-            CW_USEDEFAULT,
-            CW_USEDEFAULT,
-            width,
-            height,
-            0,
-            0,
-            hinstance,
-            0
-        )
-        
+
+        hwnd: i64 = CreateWindowExA(0, class_name_ptr as i64, title as i64, style, CW_USEDEFAULT, CW_USEDEFAULT, width, height, 0, 0, hinstance, 0)
+
         if hwnd == 0:
             g_last_error = WINDOW_ERROR_CREATE_WINDOW
             g_win32_error = GetLastError()
-            return Window()
+            return Window(handle=0 as i64, hinstance=0 as i64, width=0, height=0, should_close_flag=0, is_resized=0, is_focused=1, vulkan_surface=0 as i64)
         
-        window: Window = Window(
-            handle=hwnd,
-            hinstance=hinstance,
-            width=width,
-            height=height,
-            should_close_flag=0,
-            is_resized=0,
-            is_focused=1,
-            vulkan_surface=0
-        )
-        
+        window: Window = Window(handle=hwnd, hinstance=hinstance, width=width, height=height, should_close_flag=0, is_resized=0, is_focused=1, vulkan_surface=0)
+
         g_current_window = window as i64
         g_should_close = 0
         g_window_resized = 0
@@ -228,8 +170,8 @@ imple Window:
     fun poll_events(self):
         if self.handle == 0:
             return
-        
-        msg: MSG = MSG()
+
+        msg: MSG = MSG(hwnd=0 as i64, message=0, padding1=0, wParam=0 as i64, lParam=0 as i64, time=0, pt_x=0, pt_y=0, padding2=0)
         
         while PeekMessageA(msg as i64, 0, 0, 0, PM_REMOVE) != 0:
             TranslateMessage(msg as i64)
@@ -317,8 +259,8 @@ imple Window:
         if self.handle == 0 or instance == 0:
             g_last_error = WINDOW_ERROR_INVALID_HANDLE
             return 0
-        
-        create_info: VkWin32SurfaceCreateInfoKHR = VkWin32SurfaceCreateInfoKHR()
+
+        create_info: VkWin32SurfaceCreateInfoKHR = VkWin32SurfaceCreateInfoKHR(sType=1000009000, padding1=0, pNext=0 as i64, flags=0, padding2=0, hinstance=0 as i64, hwnd=0 as i64)
         create_info.sType = VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR
         create_info.pNext = 0
         create_info.flags = 0

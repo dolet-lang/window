@@ -9,7 +9,7 @@ load window/constants
 load window/user32
 load window/kernel32
 load window/vulkan_surface
-load window/timing
+# load window/timing  <!-- Commented: f64 not yet supported in self-hosted compiler -->
 load window/win_core
 
 # Exported structs
@@ -18,19 +18,9 @@ export RECT
 export MSG
 export WNDCLASSEXW
 export LARGE_INTEGER
-export TimeState
+# export TimeState  <!-- Commented -->
 export VkWin32SurfaceCreateInfoKHR
 export Window
-
-# Exported functions — timing
-export init_time
-export update_time
-export get_delta_time
-export get_fps
-export get_elapsed_time
-export get_frame_count
-export reset_time
-export get_time
 
 # Exported functions — window/cursor
 export WndProc
