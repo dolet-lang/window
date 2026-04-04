@@ -188,13 +188,6 @@ VK_DECIMAL: i32 = 110
 VK_DIVIDE: i32 = 111
 VK_NUMLOCK: i32 = 144
 
-# ----- Mouse Button Constants -----
-MOUSE_LEFT: i32 = 0
-MOUSE_RIGHT: i32 = 1
-MOUSE_MIDDLE: i32 = 2
-MOUSE_X1: i32 = 3
-MOUSE_X2: i32 = 4
-
 # Mouse button masks for wParam
 MK_LBUTTON: i32 = 1
 MK_RBUTTON: i32 = 2
