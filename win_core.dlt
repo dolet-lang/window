@@ -297,6 +297,13 @@ imple Window:
             return
         vkDestroySurfaceKHR(instance, self.vulkan_surface, 0)
         self.vulkan_surface = 0
+
+    fun create_software_surface(self) -> WindowSoftwareSurface:
+        if self.handle == 0:
+            g_last_error = WINDOW_ERROR_INVALID_HANDLE
+            return WindowSoftwareSurface()
+
+        return WindowSoftwareSurface(hwnd=self.handle, scratch_buffer=0, scratch_size=0, valid=1)
     
     fun set_resize_callback(self, callback: i64, user_data: i64):
         g_resize_callback = callback

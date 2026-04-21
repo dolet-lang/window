@@ -32,6 +32,12 @@ extern lib "user32":
     
     # Retrieves the coordinates of a window's client area
     fun GetClientRect(hWnd: i64, lpRect: i64) -> i32
+
+    # Retrieves a handle to a display device context for the client area of a specified window
+    fun GetDC(hWnd: i64) -> i64
+
+    # Releases a device context (DC), freeing it for use by other applications
+    fun ReleaseDC(hWnd: i64, hDC: i64) -> i32
     
     # ----- Message Handling -----
     # Dispatches incoming nonqueued messages, checks the thread message queue

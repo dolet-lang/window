@@ -8,7 +8,9 @@ load window/types
 load window/constants
 load window/user32
 load window/kernel32
+load window/gdi32
 load window/vulkan_surface
+load window/software_surface
 # load window/timing  <!-- Commented: f64 not yet supported in self-hosted compiler -->
 load window/win_core
 
@@ -20,7 +22,10 @@ export WNDCLASSEXW
 export LARGE_INTEGER
 # export TimeState  <!-- Commented -->
 export VkWin32SurfaceCreateInfoKHR
+export BITMAPINFOHEADER
+export BITMAPINFO
 export Window
+export WindowSoftwareSurface
 
 # Exported functions — window/cursor
 export WndProc

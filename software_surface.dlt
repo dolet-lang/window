@@ -1,0 +1,148 @@
+# ============================
+#  Software Surface Support
+# ============================
+# Presents RGBA8 software-rendered buffers into a native Win32 window
+
+BI_RGB: i32 = 0
+DIB_RGB_COLORS: i32 = 0
+@stack
+struct BITMAPINFOHEADER:
+    biSize: i32 = 40
+    biWidth: i32 = 0
+    biHeight: i32 = 0
+    biPlanes: i16 = 1
+    biBitCount: i16 = 32
+    biCompression: i32 = 0
+    biSizeImage: i32 = 0
+    biXPelsPerMeter: i32 = 0
+    biYPelsPerMeter: i32 = 0
+    biClrUsed: i32 = 0
+    biClrImportant: i32 = 0
+
+@stack
+struct BITMAPINFO:
+    biSize: i32 = 40
+    biWidth: i32 = 0
+    biHeight: i32 = 0
+    biPlanes: i16 = 1
+    biBitCount: i16 = 32
+    biCompression: i32 = 0
+    biSizeImage: i32 = 0
+    biXPelsPerMeter: i32 = 0
+    biYPelsPerMeter: i32 = 0
+    biClrUsed: i32 = 0
+    biClrImportant: i32 = 0
+    bmiColors: i32 = 0
+
+struct WindowSoftwareSurface:
+    hwnd: i64 = 0
+    scratch_buffer: i64 = 0
+    scratch_size: i64 = 0
+    valid: i32 = 0
+
+fun software_rgba_to_bgra(color: i32) -> i32:
+    r: i32 = color & 255
+    g: i32 = (color >> 8) & 255
+    b: i32 = (color >> 16) & 255
+    a: i32 = (color >> 24) & 255
+    return (b & 255) | ((g & 255) << 8) | ((r & 255) << 16) | ((a & 255) << 24)
+
+fun software_rgba_to_colorref(color: i32) -> i32:
+    return color & 16777215
+
+imple WindowSoftwareSurface:
+    fun is_valid(self) -> i32:
+        return self.valid
+
+    fun ensure_scratch(self, required_size: i64) -> i64:
+        if required_size <= 0:
+            return 0
+        if self.scratch_buffer != 0 and self.scratch_size >= required_size:
+            return self.scratch_buffer
+
+        if self.scratch_buffer != 0:
+            Memory.free(self.scratch_buffer)
+            self.scratch_buffer = 0
+            self.scratch_size = 0
+
+        self.scratch_buffer = Memory.malloc(required_size)
+        if self.scratch_buffer == 0:
+            return 0
+
+        self.scratch_size = required_size
+        return self.scratch_buffer
+
+    fun present_rgba8(self, pixels: i64, width: i32, height: i32, pitch: i32) -> i32:
+        if self.valid == 0:
+            return 0
+        if self.hwnd == 0 or pixels == 0:
+            return 0
+        if width <= 0 or height <= 0:
+            return 0
+        if pitch < width * 4:
+            return 0
+
+        client_rect: RECT = RECT()
+        GetClientRect(self.hwnd, client_rect as i64)
+
+        draw_width: i32 = width
+        draw_height: i32 = height
+        client_width: i32 = client_rect.right - client_rect.left
+        client_height: i32 = client_rect.bottom - client_rect.top
+        if client_width < draw_width:
+            draw_width = client_width
+        if client_height < draw_height:
+            draw_height = client_height
+        if draw_width <= 0 or draw_height <= 0:
+            return 0
+
+        hdc: i64 = GetDC(self.hwnd)
+        if hdc == 0:
+            return 0
+
+        # Create memory DC and bitmap for double-buffered blit
+        mem_dc: i64 = CreateCompatibleDC(hdc)
+        if mem_dc == 0:
+            ReleaseDC(self.hwnd, hdc)
+            return 0
+
+        mem_bmp: i64 = CreateCompatibleBitmap(hdc, draw_width, draw_height)
+        if mem_bmp == 0:
+            DeleteDC(mem_dc)
+            ReleaseDC(self.hwnd, hdc)
+            return 0
+
+        old_bmp: i64 = SelectObject(mem_dc, mem_bmp)
+
+        # SetPixel on memory DC (much faster than on window DC)
+        y: i32 = 0
+        x: i32 = 0
+        src_row: i64 = 0
+        color: i32 = 0
+        while y < draw_height:
+            src_row = pixels + (y as i64) * (pitch as i64)
+            x = 0
+            while x < draw_width:
+                color = Memory.read_i32(src_row + (x as i64) * 4)
+                SetPixel(mem_dc, x, y, software_rgba_to_colorref(color))
+                x = x + 1
+            y = y + 1
+
+        # Single BitBlt to copy entire buffer to window
+        SRCCOPY: i32 = 13369376
+        BitBlt(hdc, 0, 0, draw_width, draw_height, mem_dc, 0, 0, SRCCOPY)
+
+        # Cleanup
+        SelectObject(mem_dc, old_bmp)
+        DeleteObject(mem_bmp)
+        DeleteDC(mem_dc)
+        ReleaseDC(self.hwnd, hdc)
+        return 1
+
+    fun destroy(self):
+        if self.scratch_buffer != 0:
+            Memory.free(self.scratch_buffer)
+            self.scratch_buffer = 0
+            self.scratch_size = 0
+        self.valid = 0
+        self.hwnd = 0

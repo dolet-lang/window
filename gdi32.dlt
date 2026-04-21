@@ -1,0 +1,16 @@
+# ============================
+#  Win32 gdi32.dll Bindings
+# ============================
+# Extern function declarations for gdi32.dll
+
+extern lib "gdi32":
+    # Sets the pixel at the specified coordinates to the closest approximation of the color
+    fun SetPixel(hdc: i64, x: i32, y: i32, color: i32) -> i32
+
+    # Memory DC and bitmap operations (proven in ui module)
+    fun CreateCompatibleDC(hdc: i64) -> i64
+    fun CreateCompatibleBitmap(hdc: i64, cx: i32, cy: i32) -> i64
+    fun SelectObject(hdc: i64, h: i64) -> i64
+    fun DeleteObject(hObject: i64) -> i32
+    fun DeleteDC(hdc: i64) -> i32
+    fun BitBlt(hdc: i64, x: i32, y: i32, cx: i32, cy: i32, hdcSrc: i64, x1: i32, y1: i32, rop: i32) -> i32
