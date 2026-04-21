@@ -3,8 +3,8 @@
 
 [info]
 name = window
-version = 1.1.0
-description = Native Windows API bindings — window creation, lifecycle, and WM_CHAR / WM_MOUSEWHEEL event forwarding into the input package
+version = 1.2.0
+description = Native Windows API bindings — window creation, lifecycle, and drain-on-read WM_CHAR / WM_MOUSEWHEEL event buffers. Self-contained: does NOT depend on any other Dolet package.
 
 [libs]
 # No external libraries needed - uses Windows system DLLs
@@ -13,7 +13,7 @@ description = Native Windows API bindings — window creation, lifecycle, and WM
 # No runtime DLLs to copy - uses Windows system DLLs (user32.dll, kernel32.dll)
 
 [dependencies]
-input
+# None — window is self-contained.
 
 # Platform-specific linking information
 [link.windows]

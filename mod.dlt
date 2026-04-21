@@ -4,7 +4,6 @@
 # High-performance native window library for Win32
 # Replacement for GLFW in Qubic/Kati engine
 module window
-import input
 load window/types
 load window/constants
 load window/user32
@@ -35,3 +34,9 @@ export is_cursor_visible
 export set_cursor_locked
 export is_cursor_locked
 export set_cursor_position
+
+# Exported functions — raw event accessors (drain-on-read).
+# Callers forward these into their chosen input package each frame.
+export window_consume_wheel_delta
+export window_consume_typed_chars
+export window_consume_backspace

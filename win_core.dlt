@@ -25,10 +25,26 @@ g_window_height: i32 = 0
 g_cursor_visible: i32 = 1
 g_cursor_locked: i32 = 0
 
+# ----- Event State (owned by window, drained by consumers) -----
+# WndProc records events here; callers read them with the consume_*
+# getters below. This keeps window self-contained — it does NOT import
+# or call into any other Dolet package.
+g_wnd_wheel_delta: f32 = 0.0       # accumulated since last consume
+g_wnd_chars_buf:   i64 = 0          # lazy-allocated 256-byte ring
+g_wnd_chars_len:   i32 = 0
+g_wnd_had_backspace: i32 = 0
+
+WND_CHARS_CAP: i32 = 256
+
+# Internal: ensure the chars buffer is allocated
+fun _wnd_ensure_chars_buf():
+    if g_wnd_chars_buf == 0:
+        g_wnd_chars_buf = Memory.malloc_zeroed(WND_CHARS_CAP + 1)
 
 # ----- WndProc Callback Function -----
-# Handles window lifecycle + pumps mouse-wheel / typed-char events into
-# the Input library. Key polling still goes via GetAsyncKeyState.
+# Handles window lifecycle + records mouse-wheel / typed-char events
+# into window-local state. Keyboard polling goes via GetAsyncKeyState
+# (in the input library). This function has NO dependency on input.
 fun WndProc(hWnd: i64, uMsg: i32, wParam: i64, lParam: i64) -> i64:
     new_width: i32 = 0
     new_height: i32 = 0
@@ -61,25 +77,55 @@ fun WndProc(hWnd: i64, uMsg: i32, wParam: i64, lParam: i64) -> i64:
         return 0
 
     # Mouse wheel — wParam high word is the signed delta in multiples of
-    # WHEEL_DELTA (120). Normalize to "clicks" and forward to input.
+    # WHEEL_DELTA (120). Accumulate into window-local state.
     if uMsg == WM_MOUSEWHEEL:
         wheel_raw = ((wParam >> 16) & 65535) as i32
         # Sign-extend 16-bit signed value stored in a 32-bit register
         if wheel_raw >= 32768:
             wheel_raw = wheel_raw - 65536
         wheel_units = (wheel_raw as f32) / 120.0
-        add_scroll(wheel_units)
+        g_wnd_wheel_delta = g_wnd_wheel_delta + wheel_units
         return 0
 
-    # Typed character — wParam is the character code. Forward to input
-    # so TextInput widgets can drain it each frame.
+    # Typed character — wParam is the character code. Store in window's
+    # own buffer; consumers drain it via window_consume_typed_chars().
     if uMsg == WM_CHAR:
         typed_code = (wParam & 65535) as i32
-        input_push_typed_char(typed_code)
+        _wnd_ensure_chars_buf()
+        if typed_code == 8:
+            g_wnd_had_backspace = 1
+        elif typed_code >= 32:
+            if typed_code <= 126:
+                if g_wnd_chars_len < WND_CHARS_CAP:
+                    Memory.write_i8(g_wnd_chars_buf + (g_wnd_chars_len as i64), typed_code)
+                    g_wnd_chars_len = g_wnd_chars_len + 1
         return 0
 
     # Default message handling
     return DefWindowProcA(hWnd, uMsg, wParam, lParam)
+
+# ----- Public event getters -----
+# Drain the mouse wheel accumulator (returns 0.0 and resets if empty).
+fun window_consume_wheel_delta() -> f32:
+    v: f32 = g_wnd_wheel_delta
+    g_wnd_wheel_delta = 0.0
+    return v
+
+# Drain the typed-char buffer and return it as a str. Resets on read.
+fun window_consume_typed_chars() -> str:
+    _wnd_ensure_chars_buf()
+    if g_wnd_chars_len <= 0:
+        return ""
+    Memory.write_i8(g_wnd_chars_buf + (g_wnd_chars_len as i64), 0)
+    s: str = g_wnd_chars_buf as str
+    g_wnd_chars_len = 0
+    return s
+
+# Did the user press backspace since the last consume_typed_chars call?
+fun window_consume_backspace() -> i32:
+    v: i32 = g_wnd_had_backspace
+    g_wnd_had_backspace = 0
+    return v
 
 # ----- Window Struct -----
 struct Window:
