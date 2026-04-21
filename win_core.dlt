@@ -461,3 +461,75 @@ fun is_cursor_locked() -> i32:
 
 fun set_cursor_position(x: i32, y: i32):
     SetCursorPos(x, y)
+
+# =====================================================================
+#  Framebuffer present
+# =====================================================================
+# Callers pass a BGRA8888 framebuffer; this blits it to the window DC
+# with a single SetDIBitsToDevice. Keeps all GDI knowledge inside the
+# window package so drawing libraries (ui, etc.) stay platform-free.
+
+@stack
+struct _PresentBmi:
+    biSize:          i32 = 40
+    biWidth:         i32 = 0
+    biHeight:        i32 = 0   # negative = top-down
+    biPlanes:        i16 = 1
+    biBitCount:      i16 = 32
+    biCompression:   i32 = 0   # BI_RGB
+    biSizeImage:     i32 = 0
+    biXPelsPerMeter: i32 = 0
+    biYPelsPerMeter: i32 = 0
+    biClrUsed:       i32 = 0
+    biClrImportant:  i32 = 0
+    bmiColors:       i32 = 0
+
+fun window_present_framebuffer(hwnd: i64, data: i64, width: i32, height: i32, pitch: i32) -> i32:
+    if hwnd == 0 or data == 0:
+        return 0
+    if width <= 0 or height <= 0:
+        return 0
+    zero: i32 = width - width
+    hdc: i64 = GetDC(hwnd)
+    if hdc == 0:
+        return 0
+    bmi: _PresentBmi = _PresentBmi()
+    bmi.biSize = 40
+    bmi.biWidth = width
+    bmi.biHeight = zero - height   # top-down
+    bmi.biPlanes = 1
+    bmi.biBitCount = 32
+    bmi.biCompression = zero
+    SetDIBitsToDevice(hdc, zero, zero, width, height, zero, zero, zero, height, data, bmi as i64, zero)
+    ReleaseDC(hwnd, hdc)
+    return 1
+
+# =====================================================================
+#  Client-space mouse position
+# =====================================================================
+# Wraps GetCursorPos + ScreenToClient so consumers (ui, eqoi, game code)
+# don't need their own extern lib "user32" declaration just to read
+# where the cursor is inside the window.
+
+@stack
+struct _ClientPoint:
+    x: i32 = 0
+    y: i32 = 0
+
+fun window_client_mouse_x(hwnd: i64) -> i32:
+    if hwnd == 0:
+        return 0
+    p: _ClientPoint = _ClientPoint()
+    if GetCursorPos(p as i64) == 0:
+        return 0
+    ScreenToClient(hwnd, p as i64)
+    return p.x
+
+fun window_client_mouse_y(hwnd: i64) -> i32:
+    if hwnd == 0:
+        return 0
+    p: _ClientPoint = _ClientPoint()
+    if GetCursorPos(p as i64) == 0:
+        return 0
+    ScreenToClient(hwnd, p as i64)
+    return p.y

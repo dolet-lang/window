@@ -14,3 +14,6 @@ extern lib "gdi32":
     fun DeleteObject(hObject: i64) -> i32
     fun DeleteDC(hdc: i64) -> i32
     fun BitBlt(hdc: i64, x: i32, y: i32, cx: i32, cy: i32, hdcSrc: i64, x1: i32, y1: i32, rop: i32) -> i32
+
+    # Fast framebuffer → screen blit (used by window_present_framebuffer)
+    fun SetDIBitsToDevice(hdc: i64, xDest: i32, yDest: i32, w: i32, h: i32, xSrc: i32, ySrc: i32, StartScan: i32, cLines: i32, pvBits: i64, pbmi: i64, ColorUse: i32) -> i32
