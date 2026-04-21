@@ -4,6 +4,7 @@
 # High-performance native window library for Win32
 # Replacement for GLFW in Qubic/Kati engine
 module window
+import input
 load window/types
 load window/constants
 load window/user32
