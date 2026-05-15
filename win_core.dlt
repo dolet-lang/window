@@ -148,7 +148,7 @@ fun make_empty_wndclassexw() -> WNDCLASSEXW:
     return w
 
 # ----- Window Implementation -----
-imple Window:
+attach Window:
     static fun create(title: str, width: i32, height: i32) -> Window:
         if width <= 0 or height <= 0:
             g_last_error = WINDOW_ERROR_INVALID_PARAMETER

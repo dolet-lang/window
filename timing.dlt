@@ -32,7 +32,7 @@ struct TimeState:
     initialized: i32 = 0        # Flag indicating if state is initialized
 
 # ----- TimeState Implementation -----
-imple TimeState:
+attach TimeState:
     # Initialize the time state
     # Calls QueryPerformanceFrequency and QueryPerformanceCounter
     # Requirements: 6.4

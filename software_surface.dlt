@@ -50,7 +50,7 @@ fun software_rgba_to_bgra(color: i32) -> i32:
 fun software_rgba_to_colorref(color: i32) -> i32:
     return color & 16777215
 
-imple WindowSoftwareSurface:
+attach WindowSoftwareSurface:
     fun is_valid(self) -> i32:
         return self.valid
 
