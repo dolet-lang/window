@@ -25,23 +25,28 @@ export VkWin32SurfaceCreateInfoKHR
 export BITMAPINFOHEADER
 export BITMAPINFO
 export Window
+export WindowEvent
 export WindowSoftwareSurface
 
-# Exported functions — window/cursor
+# Exported functions - window/cursor
 export WndProc
 export set_cursor_visible
 export is_cursor_visible
 export set_cursor_locked
 export is_cursor_locked
 export set_cursor_position
+export WINDOW_EVENT_NONE
+export WINDOW_EVENT_CLOSE
+export WINDOW_EVENT_RESIZE
+export WINDOW_EVENT_FOCUS
 
-# Exported functions — raw event accessors (drain-on-read).
+# Exported functions - raw event accessors (drain-on-read).
 # Callers forward these into their chosen input package each frame.
 export window_consume_wheel_delta
 export window_consume_typed_chars
 export window_consume_backspace
 
-# Exported functions — framebuffer present + client-mouse
+# Exported functions - framebuffer present + client-mouse
 # (so drawing/UI packages don't need to declare Win32 externs themselves)
 export window_present_framebuffer
 export window_client_mouse_x

@@ -282,3 +282,11 @@ QS_ALLINPUT: i32 = 1279  # 0x04FF - All input message types
 # Wait return values
 WAIT_OBJECT_0: i32 = 0      # Event signaled
 WAIT_TIMEOUT: i32 = 258     # Timeout expired
+
+# ----- Window Event Types -----
+# Generic, package-level events. These are intentionally not tied to any
+# renderer or engine. Poll with Window.next_event().
+WINDOW_EVENT_NONE: i32 = 0
+WINDOW_EVENT_CLOSE: i32 = 1
+WINDOW_EVENT_RESIZE: i32 = 2
+WINDOW_EVENT_FOCUS: i32 = 3

@@ -13,6 +13,8 @@ g_win32_error: i32 = 0
 
 # ----- Global Window State -----
 g_current_window: i64 = 0
+g_window_handle: i64 = 0
+g_window_hinstance: i64 = 0
 g_class_name_data: i64 = 0
 g_class_registered: i32 = 0
 g_should_close: i32 = 0
@@ -27,7 +29,7 @@ g_cursor_locked: i32 = 0
 
 # ----- Event State (owned by window, drained by consumers) -----
 # WndProc records events here; callers read them with the consume_*
-# getters below. This keeps window self-contained — it does NOT import
+# getters below. This keeps window self-contained; it does NOT import
 # or call into any other Dolet package.
 g_wnd_wheel_delta: f32 = 0.0       # accumulated since last consume
 g_wnd_chars_buf:   i64 = 0          # lazy-allocated 256-byte ring
@@ -36,10 +38,55 @@ g_wnd_had_backspace: i32 = 0
 
 WND_CHARS_CAP: i32 = 256
 
+# High-level event queue. WndProc keeps this small and callers drain it from
+# their normal app loop with Window.next_event().
+g_window_event_capacity: i32 = 64
+g_window_event_read: i32 = 0
+g_window_event_write: i32 = 0
+g_window_event_hwnds: i64 = 0
+g_window_event_types: i64 = 0
+g_window_event_value1s: i64 = 0
+g_window_event_value2s: i64 = 0
+
 # Internal: ensure the chars buffer is allocated
 fun _wnd_ensure_chars_buf():
     if g_wnd_chars_buf == 0:
         g_wnd_chars_buf = Memory.malloc_zeroed(WND_CHARS_CAP + 1)
+
+fun _window_event_queue_init():
+    if g_window_event_hwnds != 0:
+        return
+    cap64: i64 = g_window_event_capacity as i64
+    g_window_event_hwnds = Memory.malloc_zeroed(cap64 * 8)
+    g_window_event_types = Memory.malloc_zeroed(cap64 * 4)
+    g_window_event_value1s = Memory.malloc_zeroed(cap64 * 4)
+    g_window_event_value2s = Memory.malloc_zeroed(cap64 * 4)
+    g_window_event_read = 0
+    g_window_event_write = 0
+
+fun _window_push_event(hwnd: i64, event_kind: i32, value1: i32, value2: i32):
+    if event_kind == WINDOW_EVENT_NONE:
+        return
+    if g_window_event_hwnds == 0:
+        _window_event_queue_init()
+
+    idx: i32 = g_window_event_write
+    next: i32 = idx + 1
+    if next >= g_window_event_capacity:
+        next = 0
+
+    if next == g_window_event_read:
+        g_window_event_read = g_window_event_read + 1
+        if g_window_event_read >= g_window_event_capacity:
+            g_window_event_read = 0
+
+    off8: i64 = (idx as i64) * 8
+    off4: i64 = (idx as i64) * 4
+    Memory.write_i64(g_window_event_hwnds + off8, hwnd)
+    Memory.write_i32(g_window_event_types + off4, event_kind)
+    Memory.write_i32(g_window_event_value1s + off4, value1)
+    Memory.write_i32(g_window_event_value2s + off4, value2)
+    g_window_event_write = next
 
 # ----- WndProc Callback Function -----
 # Handles window lifecycle + records mouse-wheel / typed-char events
@@ -55,6 +102,16 @@ fun WndProc(hWnd: i64, uMsg: i32, wParam: i64, lParam: i64) -> i64:
     # Handle window close message
     if uMsg == WM_CLOSE:
         g_should_close = 1
+        _window_push_event(hWnd, WINDOW_EVENT_CLOSE, 0, 0)
+        PostQuitMessage(0)
+        return 0
+
+    # Handle actual window destruction. This wakes message loops that would
+    # otherwise keep a process alive after the native window is gone.
+    if uMsg == WM_DESTROY:
+        g_should_close = 1
+        _window_push_event(hWnd, WINDOW_EVENT_CLOSE, 0, 0)
+        PostQuitMessage(0)
         return 0
 
     # Handle window resize message
@@ -64,19 +121,22 @@ fun WndProc(hWnd: i64, uMsg: i32, wParam: i64, lParam: i64) -> i64:
         g_window_width = new_width
         g_window_height = new_height
         g_window_resized = 1
+        _window_push_event(hWnd, WINDOW_EVENT_RESIZE, new_width, new_height)
         return 0
 
     # Handle focus gained
     if uMsg == WM_SETFOCUS:
         g_window_focused = 1
+        _window_push_event(hWnd, WINDOW_EVENT_FOCUS, 1, 0)
         return 0
 
     # Handle focus lost
     if uMsg == WM_KILLFOCUS:
         g_window_focused = 0
+        _window_push_event(hWnd, WINDOW_EVENT_FOCUS, 0, 0)
         return 0
 
-    # Mouse wheel — wParam high word is the signed delta in multiples of
+    # Mouse wheel: wParam high word is the signed delta in multiples of
     # WHEEL_DELTA (120). Accumulate into window-local state.
     if uMsg == WM_MOUSEWHEEL:
         wheel_raw = ((wParam >> 16) & 65535) as i32
@@ -87,7 +147,7 @@ fun WndProc(hWnd: i64, uMsg: i32, wParam: i64, lParam: i64) -> i64:
         g_wnd_wheel_delta = g_wnd_wheel_delta + wheel_units
         return 0
 
-    # Typed character — wParam is the character code. Store in window's
+    # Typed character: wParam is the character code. Store in window's
     # own buffer; consumers drain it via window_consume_typed_chars().
     if uMsg == WM_CHAR:
         typed_code = (wParam & 65535) as i32
@@ -126,6 +186,33 @@ fun window_consume_backspace() -> i32:
     v: i32 = g_wnd_had_backspace
     g_wnd_had_backspace = 0
     return v
+
+struct WindowEvent:
+    hwnd: i64 = 0
+    kind: i32 = 0
+    value1: i32 = 0
+    value2: i32 = 0
+
+fun window_next_event() -> WindowEvent:
+    if g_window_event_hwnds == 0:
+        return WindowEvent()
+    if g_window_event_read == g_window_event_write:
+        return WindowEvent()
+
+    idx: i32 = g_window_event_read
+    off8: i64 = (idx as i64) * 8
+    off4: i64 = (idx as i64) * 4
+    event: WindowEvent = WindowEvent(
+        hwnd=Memory.read_i64(g_window_event_hwnds + off8),
+        kind=Memory.read_i32(g_window_event_types + off4),
+        value1=Memory.read_i32(g_window_event_value1s + off4),
+        value2=Memory.read_i32(g_window_event_value2s + off4)
+    )
+
+    g_window_event_read = g_window_event_read + 1
+    if g_window_event_read >= g_window_event_capacity:
+        g_window_event_read = 0
+    return event
 
 # ----- Window Struct -----
 struct Window:
@@ -197,20 +284,130 @@ attach Window:
         window: Window = Window(handle=hwnd, hinstance=hinstance, width=width, height=height, should_close_flag=0, is_resized=0, is_focused=1, vulkan_surface=0)
 
         g_current_window = window as i64
+        g_window_handle = hwnd
+        g_window_hinstance = hinstance
         g_should_close = 0
         g_window_resized = 0
         g_window_focused = 1
         g_window_width = width
         g_window_height = height
+        _window_event_queue_init()
         
         ShowWindow(hwnd, SW_SHOW)
         g_last_error = WINDOW_ERROR_NONE
         
         return window
+
+    static fun open(title: str, width: i32, height: i32) -> i32:
+        if g_window_handle != 0:
+            Window.shutdown()
+        win: Window = Window.create(title, width, height)
+        if win.handle == 0:
+            return 0
+        return 1
+
+    static fun shutdown():
+        if g_window_handle == 0:
+            return
+        win: Window = Window(
+            handle=g_window_handle,
+            hinstance=g_window_hinstance,
+            width=g_window_width,
+            height=g_window_height,
+            should_close_flag=g_should_close,
+            is_resized=g_window_resized,
+            is_focused=g_window_focused,
+            vulkan_surface=0
+        )
+        win.destroy()
+        g_window_handle = 0
+        g_window_hinstance = 0
+
+    static fun poll():
+        if g_window_handle == 0:
+            return
+        win: Window = Window(
+            handle=g_window_handle,
+            hinstance=g_window_hinstance,
+            width=g_window_width,
+            height=g_window_height,
+            should_close_flag=g_should_close,
+            is_resized=g_window_resized,
+            is_focused=g_window_focused,
+            vulkan_surface=0
+        )
+        win.poll_events()
+        g_window_width = win.width
+        g_window_height = win.height
+        g_window_focused = win.is_focused
+
+    static fun wait():
+        if g_window_handle == 0:
+            return
+        WaitMessage()
+        Window.poll()
+
+    static fun wait_timeout(timeout_ms: i32):
+        if g_window_handle == 0:
+            return
+        if timeout_ms <= 0:
+            Window.poll()
+            return
+        MsgWaitForMultipleObjects(0, 0, 0, timeout_ms, QS_ALLINPUT)
+        Window.poll()
+
+    static fun should_close() -> i32:
+        if g_window_handle == 0:
+            return 1
+        if g_should_close == 1:
+            return 1
+        return 0
+
+    static fun running() -> i32:
+        if Window.should_close() == 0:
+            return 1
+        return 0
+
+    static fun request_close():
+        g_should_close = 1
+        PostQuitMessage(0)
+
+    static fun handle() -> i64:
+        return g_window_handle
+
+    static fun hinstance() -> i64:
+        return g_window_hinstance
+
+    static fun width() -> i32:
+        if g_window_handle == 0:
+            return 0
+        rect: RECT = RECT()
+        GetClientRect(g_window_handle, rect as i64)
+        g_window_width = rect.right - rect.left
+        return g_window_width
+
+    static fun height() -> i32:
+        if g_window_handle == 0:
+            return 0
+        rect: RECT = RECT()
+        GetClientRect(g_window_handle, rect as i64)
+        g_window_height = rect.bottom - rect.top
+        return g_window_height
+
+    static fun focused() -> i32:
+        return g_window_focused
+
+    static fun next_event() -> WindowEvent:
+        return window_next_event()
     
     fun destroy(self):
         if self.handle != 0:
+            g_should_close = 1
             DestroyWindow(self.handle)
+            PostQuitMessage(0)
+            if g_window_handle == self.handle:
+                g_window_handle = 0
+                g_window_hinstance = 0
             self.handle = 0
         
         if g_current_window == self as i64:
@@ -224,15 +421,10 @@ attach Window:
         self.hinstance = 0
         self.width = 0
         self.height = 0
-        self.should_close_flag = 0
+        self.should_close_flag = 1
         self.is_resized = 0
         self.is_focused = 0
         self.vulkan_surface = 0
-    
-    fun should_close(self) -> i32:
-        if g_should_close == 1:
-            self.should_close_flag = 1
-        return self.should_close_flag
     
     fun poll_events(self):
         if self.handle == 0:
@@ -241,8 +433,12 @@ attach Window:
         msg: MSG = MSG(hwnd=0 as i64, message=0, padding1=0, wParam=0 as i64, lParam=0 as i64, time=0, pt_x=0, pt_y=0, padding2=0)
         
         while PeekMessageA(msg as i64, 0, 0, 0, PM_REMOVE) != 0:
-            TranslateMessage(msg as i64)
-            DispatchMessageA(msg as i64)
+            if msg.message == WM_QUIT:
+                g_should_close = 1
+                self.should_close_flag = 1
+            else:
+                TranslateMessage(msg as i64)
+                DispatchMessageA(msg as i64)
         
         if g_should_close == 1:
             self.should_close_flag = 1
@@ -320,7 +516,6 @@ attach Window:
     fun get_hinstance(self) -> i64:
         return self.hinstance
 
-    
     # ----- Vulkan Surface Methods -----
     fun create_vulkan_surface(self, instance: i64) -> i64:
         if self.handle == 0 or instance == 0:
@@ -371,14 +566,6 @@ attach Window:
             return WindowSoftwareSurface()
 
         return WindowSoftwareSurface(hwnd=self.handle, scratch_buffer=0, scratch_size=0, valid=1)
-    
-    fun set_resize_callback(self, callback: i64, user_data: i64):
-        g_resize_callback = callback
-        g_resize_callback_data = user_data
-    
-    fun clear_resize_callback(self):
-        g_resize_callback = 0
-        g_resize_callback_data = 0
     
     fun get_vulkan_surface(self) -> i64:
         return self.vulkan_surface
