@@ -32,6 +32,11 @@ g_cursor_locked: i32 = 0
 # getters below. This keeps window self-contained; it does NOT import
 # or call into any other Dolet package.
 g_wnd_wheel_delta: f32 = 0.0       # accumulated since last consume
+g_wnd_mouse_delta_x: i32 = 0        # relative mouse movement accumulated since last consume
+g_wnd_mouse_delta_y: i32 = 0
+g_wnd_mouse_last_x: i32 = 0
+g_wnd_mouse_last_y: i32 = 0
+g_wnd_mouse_have_last: i32 = 0
 g_wnd_chars_buf:   i64 = 0          # lazy-allocated 256-byte ring
 g_wnd_chars_len:   i32 = 0
 g_wnd_had_backspace: i32 = 0
@@ -52,6 +57,19 @@ g_window_event_value2s: i64 = 0
 fun _wnd_ensure_chars_buf():
     if g_wnd_chars_buf == 0:
         g_wnd_chars_buf = Memory.malloc_zeroed(WND_CHARS_CAP + 1)
+
+fun window_clear_mouse_delta():
+    g_wnd_mouse_delta_x = 0
+    g_wnd_mouse_delta_y = 0
+    g_wnd_mouse_have_last = 0
+
+fun _window_center_cursor(hwnd: i64):
+    if hwnd == 0:
+        return
+    rect: RECT = RECT()
+    if GetWindowRect(hwnd, rect as i64) == 0:
+        return
+    SetCursorPos((rect.left + rect.right) / 2, (rect.top + rect.bottom) / 2)
 
 fun _window_event_queue_init():
     if g_window_event_hwnds != 0:
@@ -98,6 +116,9 @@ fun WndProc(hWnd: i64, uMsg: i32, wParam: i64, lParam: i64) -> i64:
     wheel_raw: i32 = 0
     wheel_units: f32 = 0.0
     typed_code: i32 = 0
+    mouse_x: i32 = 0
+    mouse_y: i32 = 0
+    mouse_margin: i32 = 48
 
     # Handle window close message
     if uMsg == WM_CLOSE:
@@ -133,7 +154,33 @@ fun WndProc(hWnd: i64, uMsg: i32, wParam: i64, lParam: i64) -> i64:
     # Handle focus lost
     if uMsg == WM_KILLFOCUS:
         g_window_focused = 0
+        g_wnd_mouse_have_last = 0
         _window_push_event(hWnd, WINDOW_EVENT_FOCUS, 0, 0)
+        return 0
+
+    # Relative mouse movement from WM_MOUSEMOVE. This avoids per-frame
+    # GetCursorPos polling and recenters only near window edges when captured.
+    if uMsg == WM_MOUSEMOVE:
+        mouse_x = (lParam & 65535) as i32
+        mouse_y = ((lParam >> 16) & 65535) as i32
+        if mouse_x >= 32768:
+            mouse_x = mouse_x - 65536
+        if mouse_y >= 32768:
+            mouse_y = mouse_y - 65536
+        if g_cursor_locked == 1:
+            if g_wnd_mouse_have_last == 1:
+                g_wnd_mouse_delta_x = g_wnd_mouse_delta_x + (mouse_x - g_wnd_mouse_last_x)
+                g_wnd_mouse_delta_y = g_wnd_mouse_delta_y + (mouse_y - g_wnd_mouse_last_y)
+            g_wnd_mouse_last_x = mouse_x
+            g_wnd_mouse_last_y = mouse_y
+            g_wnd_mouse_have_last = 1
+            if g_window_width > mouse_margin * 2:
+                if g_window_height > mouse_margin * 2:
+                    if mouse_x < mouse_margin or mouse_x > g_window_width - mouse_margin or mouse_y < mouse_margin or mouse_y > g_window_height - mouse_margin:
+                        g_wnd_mouse_have_last = 0
+                        _window_center_cursor(hWnd)
+        else:
+            g_wnd_mouse_have_last = 0
         return 0
 
     # Mouse wheel: wParam high word is the signed delta in multiples of
@@ -169,6 +216,16 @@ fun WndProc(hWnd: i64, uMsg: i32, wParam: i64, lParam: i64) -> i64:
 fun window_consume_wheel_delta() -> f32:
     v: f32 = g_wnd_wheel_delta
     g_wnd_wheel_delta = 0.0
+    return v
+
+fun window_consume_mouse_delta_x() -> i32:
+    v: i32 = g_wnd_mouse_delta_x
+    g_wnd_mouse_delta_x = 0
+    return v
+
+fun window_consume_mouse_delta_y() -> i32:
+    v: i32 = g_wnd_mouse_delta_y
+    g_wnd_mouse_delta_y = 0
     return v
 
 # Drain the typed-char buffer and return it as a str. Resets on read.

@@ -35,6 +35,7 @@ export is_cursor_visible
 export set_cursor_locked
 export is_cursor_locked
 export set_cursor_position
+export window_clear_mouse_delta
 export WINDOW_EVENT_NONE
 export WINDOW_EVENT_CLOSE
 export WINDOW_EVENT_RESIZE
@@ -43,6 +44,8 @@ export WINDOW_EVENT_FOCUS
 # Exported functions - raw event accessors (drain-on-read).
 # Callers forward these into their chosen input package each frame.
 export window_consume_wheel_delta
+export window_consume_mouse_delta_x
+export window_consume_mouse_delta_y
 export window_consume_typed_chars
 export window_consume_backspace
 
