@@ -35,6 +35,7 @@ export is_cursor_visible
 export set_cursor_locked
 export is_cursor_locked
 export set_cursor_position
+export window_center_mouse
 export window_clear_mouse_delta
 export WINDOW_EVENT_NONE
 export WINDOW_EVENT_CLOSE

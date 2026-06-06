@@ -36,12 +36,19 @@ g_wnd_mouse_delta_x: i32 = 0        # relative mouse movement accumulated since 
 g_wnd_mouse_delta_y: i32 = 0
 g_wnd_mouse_last_x: i32 = 0
 g_wnd_mouse_last_y: i32 = 0
+g_wnd_mouse_center_x: i32 = 0
+g_wnd_mouse_center_y: i32 = 0
 g_wnd_mouse_have_last: i32 = 0
 g_wnd_chars_buf:   i64 = 0          # lazy-allocated 256-byte ring
 g_wnd_chars_len:   i32 = 0
 g_wnd_had_backspace: i32 = 0
 
 WND_CHARS_CAP: i32 = 256
+
+@stack
+struct _WindowCursorPoint:
+    x: i32 = 0
+    y: i32 = 0
 
 # High-level event queue. WndProc keeps this small and callers drain it from
 # their normal app loop with Window.next_event().
@@ -67,9 +74,39 @@ fun _window_center_cursor(hwnd: i64):
     if hwnd == 0:
         return
     rect: RECT = RECT()
+    p: _WindowCursorPoint = _WindowCursorPoint()
     if GetWindowRect(hwnd, rect as i64) == 0:
         return
     SetCursorPos((rect.left + rect.right) / 2, (rect.top + rect.bottom) / 2)
+    if GetCursorPos(p as i64) != 0:
+        if ScreenToClient(hwnd, p as i64) != 0:
+            g_wnd_mouse_center_x = p.x
+            g_wnd_mouse_center_y = p.y
+            g_wnd_mouse_last_x = p.x
+            g_wnd_mouse_last_y = p.y
+            g_wnd_mouse_have_last = 1
+
+fun window_center_mouse(hwnd: i64):
+    _window_center_cursor(hwnd)
+
+fun _window_keep_cursor_centered(hwnd: i64):
+    if hwnd == 0:
+        return
+    if g_wnd_mouse_have_last == 0:
+        _window_center_cursor(hwnd)
+        return
+    if g_wnd_mouse_last_x < g_wnd_mouse_center_x - 2:
+        _window_center_cursor(hwnd)
+        return
+    if g_wnd_mouse_last_x > g_wnd_mouse_center_x + 2:
+        _window_center_cursor(hwnd)
+        return
+    if g_wnd_mouse_last_y < g_wnd_mouse_center_y - 2:
+        _window_center_cursor(hwnd)
+        return
+    if g_wnd_mouse_last_y > g_wnd_mouse_center_y + 2:
+        _window_center_cursor(hwnd)
+        return
 
 fun _window_event_queue_init():
     if g_window_event_hwnds != 0:
@@ -496,6 +533,10 @@ attach Window:
             else:
                 TranslateMessage(msg as i64)
                 DispatchMessageA(msg as i64)
+
+        if g_cursor_locked == 1:
+            if g_window_focused == 1:
+                _window_keep_cursor_centered(self.handle)
         
         if g_should_close == 1:
             self.should_close_flag = 1
