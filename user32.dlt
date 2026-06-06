@@ -89,6 +89,9 @@ extern lib "user32":
     
     # Changes an attribute of the specified window
     fun SetWindowLongPtrA(hWnd: i64, nIndex: i32, dwNewLong: i64) -> i64
+
+    # Retrieves display/system metrics such as primary screen width/height
+    fun GetSystemMetrics(nIndex: i32) -> i32
     
     # ----- Focus Management -----
     # Sets the keyboard focus to the specified window

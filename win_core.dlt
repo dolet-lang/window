@@ -22,6 +22,13 @@ g_window_resized: i32 = 0
 g_window_focused: i32 = 1
 g_window_width: i32 = 0
 g_window_height: i32 = 0
+g_window_mode: i32 = WINDOW_MODE_WINDOWED
+g_window_saved_style: i64 = 0
+g_window_saved_left: i32 = 0
+g_window_saved_top: i32 = 0
+g_window_saved_right: i32 = 0
+g_window_saved_bottom: i32 = 0
+g_window_saved_valid: i32 = 0
 
 # ----- Cursor State -----
 g_cursor_visible: i32 = 1
@@ -88,6 +95,101 @@ fun _window_center_cursor(hwnd: i64):
 
 fun window_center_mouse(hwnd: i64):
     _window_center_cursor(hwnd)
+
+fun _window_save_windowed_state():
+    if g_window_handle == 0:
+        return
+    if g_window_saved_valid == 1:
+        return
+    rect: RECT = RECT()
+    if GetWindowRect(g_window_handle, rect as i64) != 0:
+        g_window_saved_left = rect.left
+        g_window_saved_top = rect.top
+        g_window_saved_right = rect.right
+        g_window_saved_bottom = rect.bottom
+    g_window_saved_style = GetWindowLongPtrA(g_window_handle, GWL_STYLE)
+    if g_window_saved_style == 0:
+        g_window_saved_style = (WS_OVERLAPPEDWINDOW | WS_VISIBLE) as i64
+    g_window_saved_valid = 1
+
+fun _window_screen_width() -> i32:
+    w: i32 = GetSystemMetrics(SM_CXSCREEN)
+    if w <= 0:
+        return g_window_width
+    return w
+
+fun _window_screen_height() -> i32:
+    h: i32 = GetSystemMetrics(SM_CYSCREEN)
+    if h <= 0:
+        return g_window_height
+    return h
+
+fun _window_apply_borderless_fullscreen(mode: i32) -> i32:
+    if g_window_handle == 0:
+        return 0
+    _window_save_windowed_state()
+    screen_w: i32 = _window_screen_width()
+    screen_h: i32 = _window_screen_height()
+    if screen_w <= 0:
+        return 0
+    if screen_h <= 0:
+        return 0
+    SetWindowLongPtrA(g_window_handle, GWL_STYLE, (WS_POPUP | WS_VISIBLE) as i64)
+    SetWindowPos(g_window_handle, HWND_TOP, 0, 0, screen_w, screen_h, SWP_FRAMECHANGED | SWP_SHOWWINDOW)
+    g_window_mode = mode
+    g_window_width = screen_w
+    g_window_height = screen_h
+    g_window_resized = 1
+    return 1
+
+fun _window_apply_windowed(width: i32, height: i32) -> i32:
+    if g_window_handle == 0:
+        return 0
+    target_w: i32 = width
+    target_h: i32 = height
+    if g_window_saved_valid == 1:
+        if target_w <= 0:
+            target_w = g_window_saved_right - g_window_saved_left
+        if target_h <= 0:
+            target_h = g_window_saved_bottom - g_window_saved_top
+    if target_w <= 0:
+        target_w = g_window_width
+    if target_h <= 0:
+        target_h = g_window_height
+    if target_w <= 0:
+        target_w = 1280
+    if target_h <= 0:
+        target_h = 720
+
+    left: i32 = 64
+    top: i32 = 64
+    if g_window_saved_valid == 1:
+        left = g_window_saved_left
+        top = g_window_saved_top
+
+    style: i64 = g_window_saved_style
+    if style == 0:
+        style = (WS_OVERLAPPEDWINDOW | WS_VISIBLE) as i64
+    SetWindowLongPtrA(g_window_handle, GWL_STYLE, style)
+    SetWindowPos(g_window_handle, HWND_TOP, left, top, target_w, target_h, SWP_FRAMECHANGED | SWP_SHOWWINDOW)
+    g_window_mode = WINDOW_MODE_WINDOWED
+    g_window_width = target_w
+    g_window_height = target_h
+    g_window_resized = 1
+    g_window_saved_valid = 0
+    return 1
+
+fun window_set_mode(mode: i32, width: i32, height: i32) -> i32:
+    if mode == WINDOW_MODE_WINDOWED:
+        return _window_apply_windowed(width, height)
+    if mode == WINDOW_MODE_FULLSCREEN:
+        return _window_apply_borderless_fullscreen(mode)
+    if mode == WINDOW_MODE_BORDERLESS_FULLSCREEN:
+        return _window_apply_borderless_fullscreen(mode)
+    return 0
+
+fun window_mode() -> i32:
+    return g_window_mode
 
 fun _window_keep_cursor_centered(hwnd: i64):
     if hwnd == 0:
@@ -487,6 +589,12 @@ attach Window:
         GetClientRect(g_window_handle, rect as i64)
         g_window_height = rect.bottom - rect.top
         return g_window_height
+
+    static fun set_mode(mode: i32, width: i32, height: i32) -> i32:
+        return window_set_mode(mode, width, height)
+
+    static fun mode() -> i32:
+        return window_mode()
 
     static fun focused() -> i32:
         return g_window_focused

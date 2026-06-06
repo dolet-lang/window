@@ -36,6 +36,11 @@ export set_cursor_locked
 export is_cursor_locked
 export set_cursor_position
 export window_center_mouse
+export window_set_mode
+export window_mode
+export WINDOW_MODE_WINDOWED
+export WINDOW_MODE_FULLSCREEN
+export WINDOW_MODE_BORDERLESS_FULLSCREEN
 export window_clear_mouse_delta
 export WINDOW_EVENT_NONE
 export WINDOW_EVENT_CLOSE
