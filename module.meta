@@ -1,19 +1,19 @@
 # Window Module Metadata
-# Native Windows API bindings for window creation and management
+# Target-neutral native window API with platform-specific backends
 
 [info]
 name = window
 version = 1.5.0
-description = Native Windows API bindings - main-window API, lifecycle, event queue, framebuffer present, and client-space mouse readers. Self-contained: does NOT depend on any other Dolet package. Only place in the stack that declares Win32 externs.
+description = Target-neutral native window API. OS bindings live under library/platform/<os>; package-specific implementations live under window/platform/<os>.
 
 [libs]
-# No external libraries needed - uses Windows system DLLs
+windows = window_raw_input.lib
 
 [dlls]
-# No runtime DLLs to copy - uses Windows system DLLs (user32.dll, kernel32.dll)
+# No runtime DLLs to copy for the Windows backend; it uses system DLLs.
 
 [dependencies]
-# None - window is self-contained.
+# Raw OS bindings are imported from library/platform/<os>.
 
 # Platform-specific linking information
 [link.windows]

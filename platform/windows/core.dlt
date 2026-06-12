@@ -7,6 +7,18 @@
 # NOTE: Input handling has been moved to the standalone Input Library.
 # Use "import input" for keyboard and mouse input functions.
 
+import sys.windows.win32.types
+import sys.windows.win32.constants
+import sys.windows.win32.user32
+import sys.windows.win32.vulkan_surface
+
+# Raw mouse input is private to this backend. Keep it behind the existing
+# window_consume_mouse_delta_* API so engines do not depend on Win32 details.
+extern lib "window_raw_input":
+    fun RegisterRawInputDevices(devices: i64, device_count: i32, device_size: i32) -> i32
+    fun GetRawInputData(raw_input: i64, command: i32, data: i64, size: i64, header_size: i32) -> i32
+    fun ClientToScreen(hwnd: i64, point: i64) -> i32
+
 # ----- Global Error State -----
 g_last_error: i32 = 0
 g_win32_error: i32 = 0
@@ -46,16 +58,30 @@ g_wnd_mouse_last_y: i32 = 0
 g_wnd_mouse_center_x: i32 = 0
 g_wnd_mouse_center_y: i32 = 0
 g_wnd_mouse_have_last: i32 = 0
+g_wnd_raw_mouse_enabled: i32 = 0
+g_wnd_raw_mouse_buffer: i64 = 0
+g_wnd_raw_mouse_size: i64 = 0
 g_wnd_chars_buf:   i64 = 0          # lazy-allocated 256-byte ring
 g_wnd_chars_len:   i32 = 0
 g_wnd_had_backspace: i32 = 0
 
 WND_CHARS_CAP: i32 = 256
+WND_RAW_INPUT: i32 = 268435459
+WND_RAW_MOUSE_TYPE: i32 = 0
+WND_RAW_HEADER_SIZE: i32 = 24
+WND_RAW_MOUSE_BUFFER_SIZE: i32 = 64
 
 @stack
 struct _WindowCursorPoint:
     x: i32 = 0
     y: i32 = 0
+
+@stack
+struct _WindowRawInputDevice:
+    usage_page: i16 = 0
+    usage: i16 = 0
+    flags: i32 = 0
+    target: i64 = 0
 
 # High-level event queue. WndProc keeps this small and callers drain it from
 # their normal app loop with Window.next_event().
@@ -76,6 +102,72 @@ fun window_clear_mouse_delta():
     g_wnd_mouse_delta_x = 0
     g_wnd_mouse_delta_y = 0
     g_wnd_mouse_have_last = 0
+
+fun _window_enable_raw_mouse() -> i32:
+    device: _WindowRawInputDevice = _WindowRawInputDevice()
+    device.usage_page = 1
+    device.usage = 2
+    device.flags = 0
+    device.target = 0
+    if RegisterRawInputDevices(device as i64, 1, 16) == 0:
+        g_wnd_raw_mouse_enabled = 0
+        return 0
+    if g_wnd_raw_mouse_buffer == 0:
+        g_wnd_raw_mouse_buffer = Memory.malloc_zeroed(WND_RAW_MOUSE_BUFFER_SIZE)
+    if g_wnd_raw_mouse_size == 0:
+        g_wnd_raw_mouse_size = Memory.malloc_zeroed(4)
+    if g_wnd_raw_mouse_buffer == 0 or g_wnd_raw_mouse_size == 0:
+        g_wnd_raw_mouse_enabled = 0
+        return 0
+    g_wnd_raw_mouse_enabled = 1
+    return 1
+
+fun _window_accumulate_raw_mouse(raw_input: i64):
+    if g_wnd_raw_mouse_enabled == 0:
+        return
+    if g_cursor_locked == 0:
+        return
+    Memory.write_i32(g_wnd_raw_mouse_size, WND_RAW_MOUSE_BUFFER_SIZE)
+    read_size: i32 = GetRawInputData(raw_input, WND_RAW_INPUT, g_wnd_raw_mouse_buffer, g_wnd_raw_mouse_size, WND_RAW_HEADER_SIZE)
+    if read_size <= 0:
+        return
+    if Memory.read_i32(g_wnd_raw_mouse_buffer) != WND_RAW_MOUSE_TYPE:
+        return
+    # RAWINPUTHEADER is 24 bytes on Win64. RAWMOUSE lLastX/lLastY are
+    # at offsets 12/16 inside the 24-byte mouse payload.
+    g_wnd_mouse_delta_x = g_wnd_mouse_delta_x + Memory.read_i32(g_wnd_raw_mouse_buffer + 36)
+    g_wnd_mouse_delta_y = g_wnd_mouse_delta_y + Memory.read_i32(g_wnd_raw_mouse_buffer + 40)
+
+fun _window_raw_mouse_shutdown():
+    g_wnd_raw_mouse_enabled = 0
+    if g_wnd_raw_mouse_buffer != 0:
+        Memory.free(g_wnd_raw_mouse_buffer)
+        g_wnd_raw_mouse_buffer = 0
+    if g_wnd_raw_mouse_size != 0:
+        Memory.free(g_wnd_raw_mouse_size)
+        g_wnd_raw_mouse_size = 0
+
+fun _window_clip_cursor_to_client(hwnd: i64) -> i32:
+    if hwnd == 0:
+        return 0
+    rect: RECT = RECT()
+    top_left: _WindowCursorPoint = _WindowCursorPoint()
+    bottom_right: _WindowCursorPoint = _WindowCursorPoint()
+    if GetClientRect(hwnd, rect as i64) == 0:
+        return 0
+    top_left.x = rect.left
+    top_left.y = rect.top
+    bottom_right.x = rect.right
+    bottom_right.y = rect.bottom
+    if ClientToScreen(hwnd, top_left as i64) == 0:
+        return 0
+    if ClientToScreen(hwnd, bottom_right as i64) == 0:
+        return 0
+    rect.left = top_left.x
+    rect.top = top_left.y
+    rect.right = bottom_right.x
+    rect.bottom = bottom_right.y
+    return ClipCursor(rect as i64)
 
 fun _window_center_cursor(hwnd: i64):
     if hwnd == 0:
@@ -287,6 +379,8 @@ fun WndProc(hWnd: i64, uMsg: i32, wParam: i64, lParam: i64) -> i64:
     # Handle focus gained
     if uMsg == WM_SETFOCUS:
         g_window_focused = 1
+        if g_cursor_locked == 1:
+            _window_clip_cursor_to_client(hWnd)
         _window_push_event(hWnd, WINDOW_EVENT_FOCUS, 1, 0)
         return 0
 
@@ -294,11 +388,18 @@ fun WndProc(hWnd: i64, uMsg: i32, wParam: i64, lParam: i64) -> i64:
     if uMsg == WM_KILLFOCUS:
         g_window_focused = 0
         g_wnd_mouse_have_last = 0
+        if g_cursor_locked == 1:
+            ClipCursor(0)
         _window_push_event(hWnd, WINDOW_EVENT_FOCUS, 0, 0)
         return 0
 
+    if uMsg == WM_INPUT:
+        _window_accumulate_raw_mouse(lParam)
+        return DefWindowProcA(hWnd, uMsg, wParam, lParam)
+
     # Relative mouse movement from WM_MOUSEMOVE. This avoids per-frame
-    # GetCursorPos polling and recenters only near window edges when captured.
+    # GetCursorPos polling. It remains as a fallback if Raw Input registration
+    # is unavailable.
     if uMsg == WM_MOUSEMOVE:
         mouse_x = (lParam & 65535) as i32
         mouse_y = ((lParam >> 16) & 65535) as i32
@@ -307,6 +408,8 @@ fun WndProc(hWnd: i64, uMsg: i32, wParam: i64, lParam: i64) -> i64:
         if mouse_y >= 32768:
             mouse_y = mouse_y - 65536
         if g_cursor_locked == 1:
+            if g_wnd_raw_mouse_enabled == 1:
+                return 0
             if g_wnd_mouse_have_last == 1:
                 g_wnd_mouse_delta_x = g_wnd_mouse_delta_x + (mouse_x - g_wnd_mouse_last_x)
                 g_wnd_mouse_delta_y = g_wnd_mouse_delta_y + (mouse_y - g_wnd_mouse_last_y)
@@ -516,6 +619,7 @@ attach Window:
             vulkan_surface=0
         )
         win.destroy()
+        _window_raw_mouse_shutdown()
         g_window_handle = 0
         g_window_hinstance = 0
 
@@ -644,7 +748,9 @@ attach Window:
 
         if g_cursor_locked == 1:
             if g_window_focused == 1:
-                _window_keep_cursor_centered(self.handle)
+                _window_clip_cursor_to_client(self.handle)
+                if g_wnd_raw_mouse_enabled == 0:
+                    _window_keep_cursor_centered(self.handle)
         
         if g_should_close == 1:
             self.should_close_flag = 1
@@ -841,9 +947,8 @@ fun is_cursor_visible() -> i32:
 
 fun set_cursor_locked(locked: i32, window_handle: i64):
     if locked == 1 and g_cursor_locked == 0:
-        rect: RECT = RECT()
-        GetWindowRect(window_handle, rect as i64)
-        ClipCursor(rect as i64)
+        _window_clip_cursor_to_client(window_handle)
+        _window_enable_raw_mouse()
         g_cursor_locked = 1
     elif locked == 0 and g_cursor_locked == 1:
         ClipCursor(0)

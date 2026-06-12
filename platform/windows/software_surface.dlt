@@ -3,6 +3,10 @@
 # ============================
 # Presents RGBA8 software-rendered buffers into a native Win32 window
 
+import sys.windows.win32.types
+import sys.windows.win32.user32
+import sys.windows.win32.gdi32
+
 BI_RGB: i32 = 0
 DIB_RGB_COLORS: i32 = 0
 @stack

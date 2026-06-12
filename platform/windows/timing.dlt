@@ -4,14 +4,6 @@
 # High-resolution timing system using QueryPerformanceCounter
 # Requirements: 6.1, 6.2, 6.3, 6.4
 
-# ----- Win32 Timing Extern Functions -----
-extern lib "kernel32":
-    # Retrieves the current value of the performance counter
-    fun QueryPerformanceCounter(lpPerformanceCount: i64) -> i32
-    
-    # Retrieves the frequency of the performance counter
-    fun QueryPerformanceFrequency(lpFrequency: i64) -> i32
-
 # ----- Memory Operations -----
 # Using Dolet's built-in Memory API instead of msvcrt
 

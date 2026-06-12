@@ -1,0 +1,42 @@
+# ============================================================================
+# Linux software surface placeholder
+# ============================================================================
+# Frog uses Vulkan on Linux. This keeps the window package API complete for
+# targets that import WindowSoftwareSurface, without pulling another X11 blit
+# path into the first Linux backend.
+
+struct WindowSoftwareSurface:
+    hwnd: i64 = 0
+    scratch_buffer: i64 = 0
+    scratch_size: i64 = 0
+    valid: i32 = 0
+
+attach WindowSoftwareSurface:
+    fun is_valid(self) -> i32:
+        return self.valid
+
+    fun ensure_scratch(self, required_size: i64) -> i64:
+        if required_size <= 0:
+            return 0
+        if self.scratch_buffer != 0 and self.scratch_size >= required_size:
+            return self.scratch_buffer
+        if self.scratch_buffer != 0:
+            Memory.free(self.scratch_buffer)
+            self.scratch_buffer = 0
+            self.scratch_size = 0
+        self.scratch_buffer = Memory.malloc(required_size)
+        if self.scratch_buffer == 0:
+            return 0
+        self.scratch_size = required_size
+        return self.scratch_buffer
+
+    fun present_rgba8(self, pixels: i64, width: i32, height: i32, pitch: i32) -> i32:
+        return 0
+
+    fun destroy(self):
+        if self.scratch_buffer != 0:
+            Memory.free(self.scratch_buffer)
+            self.scratch_buffer = 0
+            self.scratch_size = 0
+        self.valid = 0
+        self.hwnd = 0
