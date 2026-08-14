@@ -36,6 +36,17 @@ X11_EVENT_BYTES: i32 = 192
 
 g_x11_event_buf: i64 = 0
 g_x11_wm_delete_window: i64 = 0
+g_x11_key_text_buf: i64 = 0
+g_x11_key_sym_buf: i64 = 0
+
+# Cached XImage wrapper for the caller-owned BGRA8888 framebuffer. XCreateImage
+# only creates metadata around the pixels; the UI surface remains the owner.
+g_x11_present_image: i64 = 0
+g_x11_present_data: i64 = 0
+g_x11_present_display: i64 = 0
+g_x11_present_width: i32 = 0
+g_x11_present_height: i32 = 0
+g_x11_present_pitch: i32 = 0
 
 g_window_event_capacity: i32 = 64
 g_window_event_read: i32 = 0
@@ -50,6 +61,14 @@ struct _WindowCursorPoint:
     x: i32 = 0
     y: i32 = 0
 
+@stack
+struct _WindowPointerQuery:
+    root_return: i64 = 0
+    child_return: i64 = 0
+    root_x: i32 = 0
+    root_y: i32 = 0
+    mask: i32 = 0
+
 fun WndProc(hWnd: i64, uMsg: i32, wParam: i64, lParam: i64) -> i64:
     return 0
 
@@ -61,6 +80,44 @@ fun _window_ensure_xevent() -> i64:
     if g_x11_event_buf == 0:
         g_x11_event_buf = Memory.malloc_zeroed(X11_EVENT_BYTES)
     return g_x11_event_buf
+
+fun _window_release_present_image():
+    if g_x11_present_image != 0:
+        # Do not call XDestroyImage: its default destructor also frees the
+        # external pixel buffer. XFree releases only the XImage metadata.
+        XFree(g_x11_present_image)
+    g_x11_present_image = 0
+    g_x11_present_data = 0
+    g_x11_present_display = 0
+    g_x11_present_width = 0
+    g_x11_present_height = 0
+    g_x11_present_pitch = 0
+
+fun _window_capture_key_text(ev: i64):
+    _wnd_ensure_chars_buf()
+    if g_x11_key_text_buf == 0:
+        g_x11_key_text_buf = Memory.malloc_zeroed(64)
+    if g_x11_key_sym_buf == 0:
+        g_x11_key_sym_buf = Memory.malloc_zeroed(8)
+    if g_x11_key_text_buf == 0 or g_x11_key_sym_buf == 0:
+        return
+
+    Memory.zero(g_x11_key_text_buf, 64)
+    Memory.write_i64(g_x11_key_sym_buf, 0)
+    count: i32 = XLookupString(ev, g_x11_key_text_buf, 63, g_x11_key_sym_buf, 0)
+    keysym: i64 = Memory.read_i64(g_x11_key_sym_buf)
+    if keysym == 65288:
+        g_wnd_had_backspace = 1
+        return
+    if count <= 0:
+        return
+
+    i: i32 = 0
+    while i < count and g_wnd_chars_len < WND_CHARS_CAP:
+        value: i8 = Memory.read_i8(g_x11_key_text_buf + (i as i64))
+        Memory.write_i8(g_wnd_chars_buf + (g_wnd_chars_len as i64), value)
+        g_wnd_chars_len = g_wnd_chars_len + 1
+        i = i + 1
 
 fun window_clear_mouse_delta():
     g_wnd_mouse_delta_x = 0
@@ -117,6 +174,9 @@ fun _window_push_event(hwnd: i64, event_kind: i32, value1: i32, value2: i32):
 
 fun _window_process_xevent(ev: i64):
     event_type: i32 = Memory.read_i32(ev)
+    if event_type == X11_KEY_PRESS:
+        _window_capture_key_text(ev)
+        return
     if event_type == X11_DESTROY_NOTIFY:
         g_should_close = 1
         _window_push_event(g_window_handle, WINDOW_EVENT_CLOSE, 0, 0)
@@ -364,6 +424,7 @@ attach Window:
     fun destroy(self):
         if self.handle != 0:
             g_should_close = 1
+            _window_release_present_image()
             XDestroyWindow(self.hinstance, self.handle)
             XFlush(self.hinstance)
             if g_window_handle == self.handle:
@@ -548,35 +609,85 @@ fun set_cursor_position(x: i32, y: i32):
     XFlush(g_window_hinstance)
 
 fun window_present_framebuffer(hwnd: i64, data: i64, width: i32, height: i32, pitch: i32) -> i32:
-    return 0
+    if hwnd == 0 or data == 0 or g_window_hinstance == 0:
+        return 0
+    if hwnd != g_window_handle:
+        return 0
+    if width <= 0 or height <= 0 or pitch < width * 4:
+        return 0
 
-fun _window_query_pointer_x(hwnd: i64, want_y: i32) -> i32:
-    if hwnd == 0 or g_window_hinstance == 0:
+    changed: i32 = 0
+    if g_x11_present_image == 0:
+        changed = 1
+    elif g_x11_present_data != data:
+        changed = 1
+    elif g_x11_present_display != g_window_hinstance:
+        changed = 1
+    elif g_x11_present_width != width or g_x11_present_height != height:
+        changed = 1
+    elif g_x11_present_pitch != pitch:
+        changed = 1
+
+    if changed == 1:
+        _window_release_present_image()
+        screen: i32 = XDefaultScreen(g_window_hinstance)
+        visual: i64 = XDefaultVisual(g_window_hinstance, screen)
+        depth: i32 = XDefaultDepth(g_window_hinstance, screen)
+        g_x11_present_image = XCreateImage(
+            g_window_hinstance,
+            visual,
+            depth,
+            X11_Z_PIXMAP,
+            0,
+            data,
+            width,
+            height,
+            32,
+            pitch
+        )
+        if g_x11_present_image == 0:
+            return 0
+        g_x11_present_data = data
+        g_x11_present_display = g_window_hinstance
+        g_x11_present_width = width
+        g_x11_present_height = height
+        g_x11_present_pitch = pitch
+
+    screen: i32 = XDefaultScreen(g_window_hinstance)
+    gc: i64 = XDefaultGC(g_window_hinstance, screen)
+    if gc == 0:
         return 0
-    root_ret: i64 = Memory.malloc_zeroed(8)
-    child_ret: i64 = Memory.malloc_zeroed(8)
-    root_x: i64 = Memory.malloc_zeroed(4)
-    root_y: i64 = Memory.malloc_zeroed(4)
-    win_x: i64 = Memory.malloc_zeroed(4)
-    win_y: i64 = Memory.malloc_zeroed(4)
-    mask: i64 = Memory.malloc_zeroed(4)
-    if root_ret == 0 or child_ret == 0 or root_x == 0 or root_y == 0 or win_x == 0 or win_y == 0 or mask == 0:
+    XPutImage(g_window_hinstance, hwnd, gc, g_x11_present_image, 0, 0, 0, 0, width, height)
+    XFlush(g_window_hinstance)
+    return 1
+
+fun window_client_mouse_position(hwnd: i64, point: i64) -> i32:
+    if hwnd == 0 or point == 0 or g_window_hinstance == 0:
         return 0
-    XQueryPointer(g_window_hinstance, hwnd, root_ret, child_ret, root_x, root_y, win_x, win_y, mask)
-    result: i32 = Memory.read_i32(win_x)
-    if want_y == 1:
-        result = Memory.read_i32(win_y)
-    Memory.free(root_ret)
-    Memory.free(child_ret)
-    Memory.free(root_x)
-    Memory.free(root_y)
-    Memory.free(win_x)
-    Memory.free(win_y)
-    Memory.free(mask)
-    return result
+    query: _WindowPointerQuery = _WindowPointerQuery()
+    result: i32 = XQueryPointer(
+        g_window_hinstance,
+        hwnd,
+        query as i64,
+        (query as i64) + 8,
+        (query as i64) + 16,
+        (query as i64) + 20,
+        point,
+        point + 4,
+        (query as i64) + 24
+    )
+    if result == 0:
+        return 0
+    return 1
 
 fun window_client_mouse_x(hwnd: i64) -> i32:
-    return _window_query_pointer_x(hwnd, 0)
+    point: _WindowCursorPoint = _WindowCursorPoint()
+    if window_client_mouse_position(hwnd, point as i64) == 0:
+        return 0
+    return point.x
 
 fun window_client_mouse_y(hwnd: i64) -> i32:
-    return _window_query_pointer_x(hwnd, 1)
+    point: _WindowCursorPoint = _WindowCursorPoint()
+    if window_client_mouse_position(hwnd, point as i64) == 0:
+        return 0
+    return point.y

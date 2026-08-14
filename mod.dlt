@@ -44,5 +44,6 @@ export window_consume_backspace
 # Exported functions - framebuffer present + client-mouse
 # (so drawing/UI packages don't need to declare Win32 externs themselves)
 export window_present_framebuffer
+export window_client_mouse_position
 export window_client_mouse_x
 export window_client_mouse_y

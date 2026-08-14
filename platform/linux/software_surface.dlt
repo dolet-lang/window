@@ -1,9 +1,8 @@
 # ============================================================================
-# Linux software surface placeholder
+# Linux X11 software surface
 # ============================================================================
-# Frog uses Vulkan on Linux. This keeps the window package API complete for
-# targets that import WindowSoftwareSurface, without pulling another X11 blit
-# path into the first Linux backend.
+# The actual X11 presentation stays in core.dlt so both this explicit surface
+# API and higher-level frameworks share the same cached XImage path.
 
 struct WindowSoftwareSurface:
     hwnd: i64 = 0
@@ -31,7 +30,9 @@ attach WindowSoftwareSurface:
         return self.scratch_buffer
 
     fun present_rgba8(self, pixels: i64, width: i32, height: i32, pitch: i32) -> i32:
-        return 0
+        if self.valid == 0:
+            return 0
+        return window_present_framebuffer(self.hwnd, pixels, width, height, pitch)
 
     fun destroy(self):
         if self.scratch_buffer != 0:

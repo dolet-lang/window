@@ -1014,20 +1014,23 @@ struct _ClientPoint:
     x: i32 = 0
     y: i32 = 0
 
+fun window_client_mouse_position(hwnd: i64, point: i64) -> i32:
+    if hwnd == 0 or point == 0:
+        return 0
+    if GetCursorPos(point) == 0:
+        return 0
+    if ScreenToClient(hwnd, point) == 0:
+        return 0
+    return 1
+
 fun window_client_mouse_x(hwnd: i64) -> i32:
-    if hwnd == 0:
-        return 0
     p: _ClientPoint = _ClientPoint()
-    if GetCursorPos(p as i64) == 0:
+    if window_client_mouse_position(hwnd, p as i64) == 0:
         return 0
-    ScreenToClient(hwnd, p as i64)
     return p.x
 
 fun window_client_mouse_y(hwnd: i64) -> i32:
-    if hwnd == 0:
-        return 0
     p: _ClientPoint = _ClientPoint()
-    if GetCursorPos(p as i64) == 0:
+    if window_client_mouse_position(hwnd, p as i64) == 0:
         return 0
-    ScreenToClient(hwnd, p as i64)
     return p.y

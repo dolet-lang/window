@@ -3,8 +3,8 @@
 
 [info]
 name = window
-version = 1.5.0
-description = Target-neutral native window API. OS bindings live under library/platform/<os>; package-specific implementations live under window/platform/<os>.
+version = 1.6.0
+description = Target-neutral native window API with Vulkan surfaces and fast native software-framebuffer presentation on Windows and X11.
 
 [libs]
 windows = window_raw_input.lib
@@ -21,7 +21,7 @@ system_libs = user32, gdi32, kernel32
 
 [link.linux]
 # Linux uses X11 for windowing
-flags = -lX11 -lGL
+flags = -lX11
 
 [link.macos]
 # macOS uses Cocoa framework
