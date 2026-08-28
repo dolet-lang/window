@@ -4,6 +4,7 @@
 [info]
 name = window
 version = 1.7.0
+layer = os
 description = Target-neutral native window API with Vulkan surfaces and software presentation on Windows, native Wayland, and X11/XWayland.
 
 [libs]
