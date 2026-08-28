@@ -1,60 +1,71 @@
 # ============================================================================
-# Linux X11 Window Backend
+# Linux native window backend
 # ============================================================================
+# The platform bridge selects native Wayland first and falls back to X11.
+# Higher layers only see this stable Dolet API and never import either display
+# server ABI directly.
 
-import sys.linux.x11
-import sys.linux.vulkan_surface
+extern lib "dolet_window_linux":
+    fun dolet_window_open(title: str, width: i32, height: i32) -> i32
+    fun dolet_window_close()
+    fun dolet_window_poll()
+    fun dolet_window_wait_timeout(timeout_ms: i32)
+    fun dolet_window_should_close() -> i32
+    fun dolet_window_request_close()
+    fun dolet_window_width() -> i32
+    fun dolet_window_height() -> i32
+    fun dolet_window_focused() -> i32
+    fun dolet_window_resized() -> i32
+    fun dolet_window_reset_resized()
+    fun dolet_window_backend() -> i32
+    fun dolet_window_backend_name() -> str
+    fun dolet_window_handle() -> i64
+    fun dolet_window_display() -> i64
+    fun dolet_window_next_event(kind: i64, value1: i64, value2: i64) -> i32
+    fun dolet_window_consume_wheel() -> f32
+    fun dolet_window_consume_mouse_dx() -> i32
+    fun dolet_window_consume_mouse_dy() -> i32
+    fun dolet_window_consume_typed() -> str
+    fun dolet_window_consume_backspace() -> i32
+    fun dolet_window_key_down(key: i32) -> i32
+    fun dolet_window_mouse_button_down(button: i32) -> i32
+    fun dolet_window_clear_mouse_delta()
+    fun dolet_window_mouse_x() -> i32
+    fun dolet_window_mouse_y() -> i32
+    fun dolet_window_set_cursor_visible(visible: i32)
+    fun dolet_window_cursor_visible() -> i32
+    fun dolet_window_set_cursor_locked(locked: i32)
+    fun dolet_window_cursor_locked() -> i32
+    fun dolet_window_set_cursor_position(x: i32, y: i32)
+    fun dolet_window_center_cursor()
+    fun dolet_window_set_title(title: str)
+    fun dolet_window_set_mode(mode: i32, width: i32, height: i32) -> i32
+    fun dolet_window_mode() -> i32
+    fun dolet_window_present(pixels: i64, width: i32, height: i32, pitch: i32) -> i32
+    fun dolet_window_vulkan_extension() -> str
+    fun dolet_window_create_vulkan_surface(instance: i64) -> i64
+    fun dolet_window_destroy_vulkan_surface(instance: i64, surface: i64)
+    fun dolet_window_set_size(width: i32, height: i32)
+    fun dolet_window_show(visible: i32)
+
+# Native dependencies of the checked-in bridge archive. Keeping these as
+# parsed extern declarations makes target selection and linking deterministic;
+# comments or module metadata cannot silently alter linker policy.
+extern lib "wayland-client":
+    fun wl_display_connect(name: str) -> i64
+
+extern lib "wayland-cursor":
+    fun wl_cursor_theme_load(name: str, size: i32, shm: i64) -> i64
+
+extern lib "xkbcommon":
+    fun xkb_context_new(flags: i32) -> i64
+
+extern lib "X11":
+    fun XOpenDisplay(name: str) -> i64
 
 g_last_error: i32 = 0
 g_win32_error: i32 = 0
-
-g_current_window: i64 = 0
-g_window_handle: i64 = 0
-g_window_hinstance: i64 = 0
-g_should_close: i32 = 0
-g_window_resized: i32 = 0
-g_window_focused: i32 = 1
-g_window_width: i32 = 0
-g_window_height: i32 = 0
-g_window_mode: i32 = WINDOW_MODE_WINDOWED
-
-g_cursor_visible: i32 = 1
-g_cursor_locked: i32 = 0
-
-g_wnd_wheel_delta: f32 = 0.0
-g_wnd_mouse_delta_x: i32 = 0
-g_wnd_mouse_delta_y: i32 = 0
-g_wnd_mouse_last_x: i32 = 0
-g_wnd_mouse_last_y: i32 = 0
-g_wnd_mouse_have_last: i32 = 0
-g_wnd_chars_buf: i64 = 0
-g_wnd_chars_len: i32 = 0
-g_wnd_had_backspace: i32 = 0
-
-WND_CHARS_CAP: i32 = 256
-X11_EVENT_BYTES: i32 = 192
-
-g_x11_event_buf: i64 = 0
-g_x11_wm_delete_window: i64 = 0
-g_x11_key_text_buf: i64 = 0
-g_x11_key_sym_buf: i64 = 0
-
-# Cached XImage wrapper for the caller-owned BGRA8888 framebuffer. XCreateImage
-# only creates metadata around the pixels; the UI surface remains the owner.
-g_x11_present_image: i64 = 0
-g_x11_present_data: i64 = 0
-g_x11_present_display: i64 = 0
-g_x11_present_width: i32 = 0
-g_x11_present_height: i32 = 0
-g_x11_present_pitch: i32 = 0
-
-g_window_event_capacity: i32 = 64
-g_window_event_read: i32 = 0
-g_window_event_write: i32 = 0
-g_window_event_hwnds: i64 = 0
-g_window_event_types: i64 = 0
-g_window_event_value1s: i64 = 0
-g_window_event_value2s: i64 = 0
+g_window_vulkan_surface: i64 = 0
 
 @stack
 struct _WindowCursorPoint:
@@ -62,206 +73,46 @@ struct _WindowCursorPoint:
     y: i32 = 0
 
 @stack
-struct _WindowPointerQuery:
-    root_return: i64 = 0
-    child_return: i64 = 0
-    root_x: i32 = 0
-    root_y: i32 = 0
-    mask: i32 = 0
+struct _WindowNativeEvent:
+    kind: i32 = 0
+    value1: i32 = 0
+    value2: i32 = 0
 
 fun WndProc(hWnd: i64, uMsg: i32, wParam: i64, lParam: i64) -> i64:
     return 0
 
-fun _wnd_ensure_chars_buf():
-    if g_wnd_chars_buf == 0:
-        g_wnd_chars_buf = Memory.malloc_zeroed(WND_CHARS_CAP + 1)
-
-fun _window_ensure_xevent() -> i64:
-    if g_x11_event_buf == 0:
-        g_x11_event_buf = Memory.malloc_zeroed(X11_EVENT_BYTES)
-    return g_x11_event_buf
-
-fun _window_release_present_image():
-    if g_x11_present_image != 0:
-        # Do not call XDestroyImage: its default destructor also frees the
-        # external pixel buffer. XFree releases only the XImage metadata.
-        XFree(g_x11_present_image)
-    g_x11_present_image = 0
-    g_x11_present_data = 0
-    g_x11_present_display = 0
-    g_x11_present_width = 0
-    g_x11_present_height = 0
-    g_x11_present_pitch = 0
-
-fun _window_capture_key_text(ev: i64):
-    _wnd_ensure_chars_buf()
-    if g_x11_key_text_buf == 0:
-        g_x11_key_text_buf = Memory.malloc_zeroed(64)
-    if g_x11_key_sym_buf == 0:
-        g_x11_key_sym_buf = Memory.malloc_zeroed(8)
-    if g_x11_key_text_buf == 0 or g_x11_key_sym_buf == 0:
-        return
-
-    Memory.zero(g_x11_key_text_buf, 64)
-    Memory.write_i64(g_x11_key_sym_buf, 0)
-    count: i32 = XLookupString(ev, g_x11_key_text_buf, 63, g_x11_key_sym_buf, 0)
-    keysym: i64 = Memory.read_i64(g_x11_key_sym_buf)
-    if keysym == 65288:
-        g_wnd_had_backspace = 1
-        return
-    if count <= 0:
-        return
-
-    i: i32 = 0
-    while i < count and g_wnd_chars_len < WND_CHARS_CAP:
-        value: i8 = Memory.read_i8(g_x11_key_text_buf + (i as i64))
-        Memory.write_i8(g_wnd_chars_buf + (g_wnd_chars_len as i64), value)
-        g_wnd_chars_len = g_wnd_chars_len + 1
-        i = i + 1
-
 fun window_clear_mouse_delta():
-    g_wnd_mouse_delta_x = 0
-    g_wnd_mouse_delta_y = 0
-    g_wnd_mouse_have_last = 0
-
-fun _window_center_cursor(hwnd: i64):
-    if hwnd == 0:
-        return
-    if g_window_hinstance == 0:
-        return
-    cx: i32 = g_window_width / 2
-    cy: i32 = g_window_height / 2
-    XWarpPointer(g_window_hinstance, 0, hwnd, 0, 0, 0, 0, cx, cy)
-    XFlush(g_window_hinstance)
-    g_wnd_mouse_last_x = cx
-    g_wnd_mouse_last_y = cy
-    g_wnd_mouse_have_last = 1
+    dolet_window_clear_mouse_delta()
 
 fun window_center_mouse(hwnd: i64):
-    _window_center_cursor(hwnd)
-
-fun _window_event_queue_init():
-    if g_window_event_hwnds != 0:
-        return
-    cap64: i64 = g_window_event_capacity as i64
-    g_window_event_hwnds = Memory.malloc_zeroed(cap64 * 8)
-    g_window_event_types = Memory.malloc_zeroed(cap64 * 4)
-    g_window_event_value1s = Memory.malloc_zeroed(cap64 * 4)
-    g_window_event_value2s = Memory.malloc_zeroed(cap64 * 4)
-    g_window_event_read = 0
-    g_window_event_write = 0
-
-fun _window_push_event(hwnd: i64, event_kind: i32, value1: i32, value2: i32):
-    if event_kind == WINDOW_EVENT_NONE:
-        return
-    if g_window_event_hwnds == 0:
-        _window_event_queue_init()
-    idx: i32 = g_window_event_write
-    next: i32 = idx + 1
-    if next >= g_window_event_capacity:
-        next = 0
-    if next == g_window_event_read:
-        g_window_event_read = g_window_event_read + 1
-        if g_window_event_read >= g_window_event_capacity:
-            g_window_event_read = 0
-    off8: i64 = (idx as i64) * 8
-    off4: i64 = (idx as i64) * 4
-    Memory.write_i64(g_window_event_hwnds + off8, hwnd)
-    Memory.write_i32(g_window_event_types + off4, event_kind)
-    Memory.write_i32(g_window_event_value1s + off4, value1)
-    Memory.write_i32(g_window_event_value2s + off4, value2)
-    g_window_event_write = next
-
-fun _window_process_xevent(ev: i64):
-    event_type: i32 = Memory.read_i32(ev)
-    if event_type == X11_KEY_PRESS:
-        _window_capture_key_text(ev)
-        return
-    if event_type == X11_DESTROY_NOTIFY:
-        g_should_close = 1
-        _window_push_event(g_window_handle, WINDOW_EVENT_CLOSE, 0, 0)
-        return
-    if event_type == X11_CLIENT_MESSAGE:
-        message_atom: i64 = Memory.read_i64(ev + 56)
-        if message_atom == g_x11_wm_delete_window:
-            g_should_close = 1
-            _window_push_event(g_window_handle, WINDOW_EVENT_CLOSE, 0, 0)
-        return
-    if event_type == X11_CONFIGURE_NOTIFY:
-        new_width: i32 = Memory.read_i32(ev + 56)
-        new_height: i32 = Memory.read_i32(ev + 60)
-        if new_width > 0:
-            if new_height > 0:
-                if new_width != g_window_width or new_height != g_window_height:
-                    g_window_width = new_width
-                    g_window_height = new_height
-                    g_window_resized = 1
-                    _window_push_event(g_window_handle, WINDOW_EVENT_RESIZE, new_width, new_height)
-        return
-    if event_type == X11_FOCUS_IN:
-        g_window_focused = 1
-        _window_push_event(g_window_handle, WINDOW_EVENT_FOCUS, 1, 0)
-        return
-    if event_type == X11_FOCUS_OUT:
-        g_window_focused = 0
-        g_wnd_mouse_have_last = 0
-        _window_push_event(g_window_handle, WINDOW_EVENT_FOCUS, 0, 0)
-        return
-    if event_type == X11_MOTION_NOTIFY:
-        mouse_x: i32 = Memory.read_i32(ev + 64)
-        mouse_y: i32 = Memory.read_i32(ev + 68)
-        if g_cursor_locked == 1:
-            if g_wnd_mouse_have_last == 1:
-                g_wnd_mouse_delta_x = g_wnd_mouse_delta_x + (mouse_x - g_wnd_mouse_last_x)
-                g_wnd_mouse_delta_y = g_wnd_mouse_delta_y + (mouse_y - g_wnd_mouse_last_y)
-            g_wnd_mouse_last_x = mouse_x
-            g_wnd_mouse_last_y = mouse_y
-            g_wnd_mouse_have_last = 1
-            margin: i32 = 48
-            if g_window_width > margin * 2:
-                if g_window_height > margin * 2:
-                    if mouse_x < margin or mouse_x > g_window_width - margin or mouse_y < margin or mouse_y > g_window_height - margin:
-                        g_wnd_mouse_have_last = 0
-                        _window_center_cursor(g_window_handle)
-        else:
-            g_wnd_mouse_have_last = 0
-        return
-    if event_type == X11_BUTTON_PRESS:
-        button: i32 = Memory.read_i32(ev + 80)
-        if button == 4:
-            g_wnd_wheel_delta = g_wnd_wheel_delta + 1.0
-        elif button == 5:
-            g_wnd_wheel_delta = g_wnd_wheel_delta - 1.0
-        return
+    dolet_window_center_cursor()
 
 fun window_consume_wheel_delta() -> f32:
-    v: f32 = g_wnd_wheel_delta
-    g_wnd_wheel_delta = 0.0
-    return v
+    return dolet_window_consume_wheel()
 
 fun window_consume_mouse_delta_x() -> i32:
-    v: i32 = g_wnd_mouse_delta_x
-    g_wnd_mouse_delta_x = 0
-    return v
+    return dolet_window_consume_mouse_dx()
 
 fun window_consume_mouse_delta_y() -> i32:
-    v: i32 = g_wnd_mouse_delta_y
-    g_wnd_mouse_delta_y = 0
-    return v
+    return dolet_window_consume_mouse_dy()
 
 fun window_consume_typed_chars() -> str:
-    _wnd_ensure_chars_buf()
-    if g_wnd_chars_len <= 0:
-        return ""
-    Memory.write_i8(g_wnd_chars_buf + (g_wnd_chars_len as i64), 0 as i8)
-    s: str = g_wnd_chars_buf as str
-    g_wnd_chars_len = 0
-    return s
+    return dolet_window_consume_typed()
 
 fun window_consume_backspace() -> i32:
-    v: i32 = g_wnd_had_backspace
-    g_wnd_had_backspace = 0
-    return v
+    return dolet_window_consume_backspace()
+
+fun window_key_down(key: i32) -> i32:
+    return dolet_window_key_down(key)
+
+fun window_mouse_button_down(button: i32) -> i32:
+    return dolet_window_mouse_button_down(button)
+
+fun window_backend() -> i32:
+    return dolet_window_backend()
+
+fun window_backend_name() -> str:
+    return dolet_window_backend_name()
 
 struct WindowEvent:
     hwnd: i64 = 0
@@ -270,23 +121,15 @@ struct WindowEvent:
     value2: i32 = 0
 
 fun window_next_event() -> WindowEvent:
-    if g_window_event_hwnds == 0:
+    native: _WindowNativeEvent = _WindowNativeEvent()
+    if dolet_window_next_event(native as i64, (native as i64) + 4, (native as i64) + 8) == 0:
         return WindowEvent()
-    if g_window_event_read == g_window_event_write:
-        return WindowEvent()
-    idx: i32 = g_window_event_read
-    off8: i64 = (idx as i64) * 8
-    off4: i64 = (idx as i64) * 4
-    event: WindowEvent = WindowEvent(
-        hwnd=Memory.read_i64(g_window_event_hwnds + off8),
-        kind=Memory.read_i32(g_window_event_types + off4),
-        value1=Memory.read_i32(g_window_event_value1s + off4),
-        value2=Memory.read_i32(g_window_event_value2s + off4)
+    return WindowEvent(
+        hwnd=dolet_window_handle(),
+        kind=native.kind,
+        value1=native.value1,
+        value2=native.value2
     )
-    g_window_event_read = g_window_event_read + 1
-    if g_window_event_read >= g_window_event_capacity:
-        g_window_event_read = 0
-    return event
 
 struct Window:
     handle: i64 = 0
@@ -299,142 +142,88 @@ struct Window:
     vulkan_surface: i64 = 0
 
 fun make_empty_window() -> Window:
-    return Window(handle=0 as i64, hinstance=0 as i64, width=0, height=0, should_close_flag=0, is_resized=0, is_focused=1, vulkan_surface=0 as i64)
+    return Window()
 
 attach Window:
     static fun create(title: str, width: i32, height: i32) -> Window:
         if width <= 0 or height <= 0:
             g_last_error = WINDOW_ERROR_INVALID_PARAMETER
             return make_empty_window()
-
-        display: i64 = XOpenDisplay(0)
-        if display == 0:
+        if dolet_window_open(title, width, height) == 0:
             g_last_error = WINDOW_ERROR_CREATE_WINDOW
             return make_empty_window()
-
-        screen: i32 = XDefaultScreen(display)
-        root: i64 = XRootWindow(display, screen)
-        border: i64 = XBlackPixel(display, screen)
-        background: i64 = XBlackPixel(display, screen)
-        xwin: i64 = XCreateSimpleWindow(display, root, 64, 64, width, height, 0, border, background)
-        if xwin == 0:
-            XCloseDisplay(display)
-            g_last_error = WINDOW_ERROR_CREATE_WINDOW
-            return make_empty_window()
-
-        mask: i64 = X11_STRUCTURE_NOTIFY_MASK | X11_EXPOSURE_MASK | X11_POINTER_MOTION_MASK | X11_BUTTON_PRESS_MASK | X11_BUTTON_RELEASE_MASK | X11_FOCUS_CHANGE_MASK | X11_KEY_PRESS_MASK | X11_KEY_RELEASE_MASK
-        XSelectInput(display, xwin, mask)
-        XStoreName(display, xwin, title)
-
-        g_x11_wm_delete_window = XInternAtom(display, "WM_DELETE_WINDOW", 0)
-        atom_ptr: i64 = Memory.malloc_zeroed(8)
-        if atom_ptr != 0:
-            Memory.write_i64(atom_ptr, g_x11_wm_delete_window)
-            XSetWMProtocols(display, xwin, atom_ptr, 1)
-            Memory.free(atom_ptr)
-
-        XMapWindow(display, xwin)
-        XFlush(display)
-
-        window: Window = Window(handle=xwin, hinstance=display, width=width, height=height, should_close_flag=0, is_resized=0, is_focused=1, vulkan_surface=0)
-        g_current_window = window as i64
-        g_window_handle = xwin
-        g_window_hinstance = display
-        g_should_close = 0
-        g_window_resized = 0
-        g_window_focused = 1
-        g_window_width = width
-        g_window_height = height
-        g_window_mode = WINDOW_MODE_WINDOWED
-        _window_event_queue_init()
-        _window_ensure_xevent()
         g_last_error = WINDOW_ERROR_NONE
-        return window
+        return Window(
+            handle=dolet_window_handle(),
+            hinstance=dolet_window_display(),
+            width=dolet_window_width(),
+            height=dolet_window_height(),
+            should_close_flag=0,
+            is_resized=0,
+            is_focused=dolet_window_focused(),
+            vulkan_surface=0
+        )
 
     static fun open(title: str, width: i32, height: i32) -> i32:
-        if g_window_handle != 0:
+        if dolet_window_handle() != 0:
             Window.shutdown()
-        win: Window = Window.create(title, width, height)
-        if win.handle == 0:
+        if dolet_window_open(title, width, height) == 0:
+            g_last_error = WINDOW_ERROR_CREATE_WINDOW
             return 0
+        g_last_error = WINDOW_ERROR_NONE
         return 1
 
     static fun shutdown():
-        if g_window_handle == 0:
-            return
-        win: Window = Window(handle=g_window_handle, hinstance=g_window_hinstance, width=g_window_width, height=g_window_height, should_close_flag=g_should_close, is_resized=g_window_resized, is_focused=g_window_focused, vulkan_surface=0)
-        win.destroy()
-        g_window_handle = 0
-        g_window_hinstance = 0
+        dolet_window_close()
+        g_window_vulkan_surface = 0
 
     static fun poll():
-        if g_window_handle == 0:
-            return
-        win: Window = Window(handle=g_window_handle, hinstance=g_window_hinstance, width=g_window_width, height=g_window_height, should_close_flag=g_should_close, is_resized=g_window_resized, is_focused=g_window_focused, vulkan_surface=0)
-        win.poll_events()
-        g_window_width = win.width
-        g_window_height = win.height
-        g_window_focused = win.is_focused
+        dolet_window_poll()
 
     static fun wait():
-        Window.poll()
+        dolet_window_wait_timeout(-1)
 
     static fun wait_timeout(timeout_ms: i32):
-        Window.poll()
+        dolet_window_wait_timeout(timeout_ms)
 
     static fun should_close() -> i32:
-        if g_window_handle == 0:
-            return 1
-        if g_should_close == 1:
-            return 1
-        return 0
+        return dolet_window_should_close()
 
     static fun running() -> i32:
-        if Window.should_close() == 0:
+        if dolet_window_should_close() == 0:
             return 1
         return 0
 
     static fun request_close():
-        g_should_close = 1
+        dolet_window_request_close()
 
     static fun handle() -> i64:
-        return g_window_handle
+        return dolet_window_handle()
 
     static fun hinstance() -> i64:
-        return g_window_hinstance
+        return dolet_window_display()
 
     static fun width() -> i32:
-        return g_window_width
+        return dolet_window_width()
 
     static fun height() -> i32:
-        return g_window_height
+        return dolet_window_height()
 
     static fun set_mode(mode: i32, width: i32, height: i32) -> i32:
-        return window_set_mode(mode, width, height)
+        return dolet_window_set_mode(mode, width, height)
 
     static fun mode() -> i32:
-        return window_mode()
+        return dolet_window_mode()
 
     static fun focused() -> i32:
-        return g_window_focused
+        return dolet_window_focused()
 
     static fun next_event() -> WindowEvent:
         return window_next_event()
 
     fun destroy(self):
-        if self.handle != 0:
-            g_should_close = 1
-            _window_release_present_image()
-            XDestroyWindow(self.hinstance, self.handle)
-            XFlush(self.hinstance)
-            if g_window_handle == self.handle:
-                g_window_handle = 0
-                g_window_hinstance = 0
-            self.handle = 0
-        if self.hinstance != 0:
-            XCloseDisplay(self.hinstance)
-        if g_current_window == self as i64:
-            g_current_window = 0
+        dolet_window_close()
+        self.handle = 0
         self.hinstance = 0
         self.width = 0
         self.height = 0
@@ -444,133 +233,103 @@ attach Window:
         self.vulkan_surface = 0
 
     fun poll_events(self):
-        if self.handle == 0:
-            return
-        ev: i64 = _window_ensure_xevent()
-        while XPending(self.hinstance) > 0:
-            Memory.zero(ev, X11_EVENT_BYTES)
-            XNextEvent(self.hinstance, ev)
-            _window_process_xevent(ev)
-        if g_should_close == 1:
-            self.should_close_flag = 1
-        if g_window_resized == 1:
-            self.width = g_window_width
-            self.height = g_window_height
-            self.is_resized = 1
-        self.is_focused = g_window_focused
+        dolet_window_poll()
+        self.handle = dolet_window_handle()
+        self.hinstance = dolet_window_display()
+        self.width = dolet_window_width()
+        self.height = dolet_window_height()
+        self.should_close_flag = dolet_window_should_close()
+        self.is_resized = dolet_window_resized()
+        self.is_focused = dolet_window_focused()
 
     fun get_width(self) -> i32:
-        self.width = g_window_width
+        self.width = dolet_window_width()
         return self.width
 
     fun get_height(self) -> i32:
-        self.height = g_window_height
+        self.height = dolet_window_height()
         return self.height
 
     fun set_size(self, width: i32, height: i32):
+        dolet_window_set_size(width, height)
         self.width = width
         self.height = height
-        g_window_width = width
-        g_window_height = height
-        g_window_resized = 1
 
     fun set_title(self, title: str):
-        if self.handle == 0:
-            return
-        XStoreName(self.hinstance, self.handle, title)
-        XFlush(self.hinstance)
+        dolet_window_set_title(title)
 
     fun show(self):
-        if self.handle == 0:
-            return
-        XMapWindow(self.hinstance, self.handle)
-        XFlush(self.hinstance)
+        dolet_window_show(1)
 
     fun hide(self):
-        return
+        dolet_window_show(0)
 
     fun was_resized(self) -> i32:
-        if g_window_resized == 1:
-            self.is_resized = 1
-            self.width = g_window_width
-            self.height = g_window_height
+        self.is_resized = dolet_window_resized()
+        if self.is_resized == 1:
+            self.width = dolet_window_width()
+            self.height = dolet_window_height()
         return self.is_resized
 
     fun reset_resize_flag(self):
+        dolet_window_reset_resized()
         self.is_resized = 0
-        g_window_resized = 0
 
     fun has_focus(self) -> i32:
-        self.is_focused = g_window_focused
+        self.is_focused = dolet_window_focused()
         return self.is_focused
 
     fun get_handle(self) -> i64:
+        self.handle = dolet_window_handle()
         return self.handle
 
     fun get_hinstance(self) -> i64:
+        self.hinstance = dolet_window_display()
         return self.hinstance
 
     fun create_vulkan_surface(self, instance: i64) -> i64:
-        if self.handle == 0 or instance == 0:
+        if instance == 0 or dolet_window_handle() == 0:
             g_last_error = WINDOW_ERROR_INVALID_HANDLE
             return 0
-        create_info: VkXlibSurfaceCreateInfoKHR = VkXlibSurfaceCreateInfoKHR(sType=VK_STRUCTURE_TYPE_XLIB_SURFACE_CREATE_INFO_KHR, padding1=0, pNext=0 as i64, flags=0, padding2=0, display=self.hinstance, window=self.handle)
-        surface_ptr: i64 = Memory.malloc(8)
-        if surface_ptr == 0:
+        self.vulkan_surface = dolet_window_create_vulkan_surface(instance)
+        g_window_vulkan_surface = self.vulkan_surface
+        if self.vulkan_surface == 0:
             g_last_error = WINDOW_ERROR_VULKAN_SURFACE
-            return 0
-        Memory.write_i64(surface_ptr, 0)
-        result: i32 = vkCreateXlibSurfaceKHR(instance, create_info as i64, 0, surface_ptr)
-        if result != VK_SUCCESS:
-            g_last_error = WINDOW_ERROR_VULKAN_SURFACE
-            g_win32_error = result
-            Memory.free(surface_ptr)
-            return 0
-        surface: i64 = Memory.read_i64(surface_ptr)
-        Memory.free(surface_ptr)
-        self.vulkan_surface = surface
-        return surface
+        return self.vulkan_surface
 
     static fun get_required_extension_1() -> str:
         return "VK_KHR_surface"
 
     static fun get_required_extension_2() -> str:
-        return "VK_KHR_xlib_surface"
+        return dolet_window_vulkan_extension()
 
     fun destroy_vulkan_surface(self, instance: i64):
-        if self.vulkan_surface == 0 or instance == 0:
+        if instance == 0 or self.vulkan_surface == 0:
             return
-        vkDestroySurfaceKHR(instance, self.vulkan_surface, 0)
+        dolet_window_destroy_vulkan_surface(instance, self.vulkan_surface)
         self.vulkan_surface = 0
+        g_window_vulkan_surface = 0
 
     fun create_software_surface(self) -> WindowSoftwareSurface:
-        if self.handle == 0:
+        if dolet_window_handle() == 0:
             g_last_error = WINDOW_ERROR_INVALID_HANDLE
             return WindowSoftwareSurface()
-        return WindowSoftwareSurface(hwnd=self.handle, scratch_buffer=0, scratch_size=0, valid=1)
+        return WindowSoftwareSurface(hwnd=dolet_window_handle(), scratch_buffer=0, scratch_size=0, valid=1)
 
     fun get_vulkan_surface(self) -> i64:
         return self.vulkan_surface
 
     fun wait_events(self):
-        self.poll_events()
+        dolet_window_wait_timeout(-1)
 
     fun wait_events_timeout(self, timeout_ms: i32):
-        self.poll_events()
+        dolet_window_wait_timeout(timeout_ms)
 
 fun window_set_mode(mode: i32, width: i32, height: i32) -> i32:
-    if mode == WINDOW_MODE_WINDOWED:
-        g_window_mode = WINDOW_MODE_WINDOWED
-    elif mode == WINDOW_MODE_FULLSCREEN:
-        g_window_mode = WINDOW_MODE_FULLSCREEN
-    elif mode == WINDOW_MODE_BORDERLESS_FULLSCREEN:
-        g_window_mode = WINDOW_MODE_BORDERLESS_FULLSCREEN
-    else:
-        return 0
-    return 1
+    return dolet_window_set_mode(mode, width, height)
 
 fun window_mode() -> i32:
-    return g_window_mode
+    return dolet_window_mode()
 
 fun get_last_error() -> i32:
     return g_last_error
@@ -587,107 +346,32 @@ fun set_error(error_code: i32, win32_error: i32):
     g_win32_error = win32_error
 
 fun set_cursor_visible(visible: i32):
-    g_cursor_visible = visible
+    dolet_window_set_cursor_visible(visible)
 
 fun is_cursor_visible() -> i32:
-    return g_cursor_visible
+    return dolet_window_cursor_visible()
 
 fun set_cursor_locked(locked: i32, window_handle: i64):
-    g_cursor_locked = locked
-    if locked == 1:
-        _window_center_cursor(window_handle)
-    else:
-        window_clear_mouse_delta()
+    dolet_window_set_cursor_locked(locked)
 
 fun is_cursor_locked() -> i32:
-    return g_cursor_locked
+    return dolet_window_cursor_locked()
 
 fun set_cursor_position(x: i32, y: i32):
-    if g_window_hinstance == 0 or g_window_handle == 0:
-        return
-    XWarpPointer(g_window_hinstance, 0, g_window_handle, 0, 0, 0, 0, x, y)
-    XFlush(g_window_hinstance)
+    dolet_window_set_cursor_position(x, y)
 
 fun window_present_framebuffer(hwnd: i64, data: i64, width: i32, height: i32, pitch: i32) -> i32:
-    if hwnd == 0 or data == 0 or g_window_hinstance == 0:
-        return 0
-    if hwnd != g_window_handle:
-        return 0
-    if width <= 0 or height <= 0 or pitch < width * 4:
-        return 0
-
-    changed: i32 = 0
-    if g_x11_present_image == 0:
-        changed = 1
-    elif g_x11_present_data != data:
-        changed = 1
-    elif g_x11_present_display != g_window_hinstance:
-        changed = 1
-    elif g_x11_present_width != width or g_x11_present_height != height:
-        changed = 1
-    elif g_x11_present_pitch != pitch:
-        changed = 1
-
-    if changed == 1:
-        _window_release_present_image()
-        screen: i32 = XDefaultScreen(g_window_hinstance)
-        visual: i64 = XDefaultVisual(g_window_hinstance, screen)
-        depth: i32 = XDefaultDepth(g_window_hinstance, screen)
-        g_x11_present_image = XCreateImage(
-            g_window_hinstance,
-            visual,
-            depth,
-            X11_Z_PIXMAP,
-            0,
-            data,
-            width,
-            height,
-            32,
-            pitch
-        )
-        if g_x11_present_image == 0:
-            return 0
-        g_x11_present_data = data
-        g_x11_present_display = g_window_hinstance
-        g_x11_present_width = width
-        g_x11_present_height = height
-        g_x11_present_pitch = pitch
-
-    screen: i32 = XDefaultScreen(g_window_hinstance)
-    gc: i64 = XDefaultGC(g_window_hinstance, screen)
-    if gc == 0:
-        return 0
-    XPutImage(g_window_hinstance, hwnd, gc, g_x11_present_image, 0, 0, 0, 0, width, height)
-    XFlush(g_window_hinstance)
-    return 1
+    return dolet_window_present(data, width, height, pitch)
 
 fun window_client_mouse_position(hwnd: i64, point: i64) -> i32:
-    if hwnd == 0 or point == 0 or g_window_hinstance == 0:
+    if point == 0 or dolet_window_handle() == 0:
         return 0
-    query: _WindowPointerQuery = _WindowPointerQuery()
-    result: i32 = XQueryPointer(
-        g_window_hinstance,
-        hwnd,
-        query as i64,
-        (query as i64) + 8,
-        (query as i64) + 16,
-        (query as i64) + 20,
-        point,
-        point + 4,
-        (query as i64) + 24
-    )
-    if result == 0:
-        return 0
+    Memory.write_i32(point, dolet_window_mouse_x())
+    Memory.write_i32(point + 4, dolet_window_mouse_y())
     return 1
 
 fun window_client_mouse_x(hwnd: i64) -> i32:
-    point: _WindowCursorPoint = _WindowCursorPoint()
-    if window_client_mouse_position(hwnd, point as i64) == 0:
-        return 0
-    return point.x
+    return dolet_window_mouse_x()
 
 fun window_client_mouse_y(hwnd: i64) -> i32:
-    point: _WindowCursorPoint = _WindowCursorPoint()
-    if window_client_mouse_position(hwnd, point as i64) == 0:
-        return 0
-    return point.y
+    return dolet_window_mouse_y()

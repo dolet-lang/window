@@ -3,11 +3,12 @@
 
 [info]
 name = window
-version = 1.6.0
-description = Target-neutral native window API with Vulkan surfaces and fast native software-framebuffer presentation on Windows and X11.
+version = 1.7.0
+description = Target-neutral native window API with Vulkan surfaces and software presentation on Windows, native Wayland, and X11/XWayland.
 
 [libs]
 windows = window_raw_input.lib
+linux = libdolet_window_linux.a
 
 [dlls]
 # No runtime DLLs to copy for the Windows backend; it uses system DLLs.
@@ -20,8 +21,8 @@ windows = window_raw_input.lib
 system_libs = user32, gdi32, kernel32
 
 [link.linux]
-# Linux uses X11 for windowing
-flags = -lX11
+# Wayland is preferred at runtime; X11 remains a compatibility fallback.
+flags = -ldolet_window_linux -lwayland-client -lwayland-cursor -lxkbcommon -lX11
 
 [link.macos]
 # macOS uses Cocoa framework

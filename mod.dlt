@@ -40,6 +40,10 @@ export window_consume_mouse_delta_x
 export window_consume_mouse_delta_y
 export window_consume_typed_chars
 export window_consume_backspace
+export window_key_down
+export window_mouse_button_down
+export window_backend
+export window_backend_name
 
 # Exported functions - framebuffer present + client-mouse
 # (so drawing/UI packages don't need to declare Win32 externs themselves)
