@@ -455,6 +455,25 @@ fun WndProc(hWnd: i64, uMsg: i32, wParam: i64, lParam: i64) -> i64:
 
 # ----- Public event getters -----
 # Drain the mouse wheel accumulator (returns 0.0 and resets if empty).
+# Display scale as a percentage, 100 being one logical pixel per physical
+# one. Windows reports dots-per-inch for the display a window sits on, and 96
+# is the one-to-one figure.
+fun window_scale_percent() -> i32:
+    hwnd: i64 = Window.handle()
+    if hwnd == 0:
+        return 100
+    hdc: i64 = GetDC(hwnd)
+    if hdc == 0:
+        return 100
+    # LOGPIXELSX. The per-monitor call added in Windows 10 is absent from the
+    # import library the toolchain ships, and this one has been present since
+    # long before it.
+    dpi: i32 = GetDeviceCaps(hdc, 88)
+    ReleaseDC(hwnd, hdc)
+    if dpi <= 0:
+        return 100
+    return (dpi * 100) / 96
+
 fun window_consume_wheel_delta() -> f32:
     v: f32 = g_wnd_wheel_delta
     g_wnd_wheel_delta = 0.0

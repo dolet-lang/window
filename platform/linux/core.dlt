@@ -87,6 +87,13 @@ fun window_clear_mouse_delta():
 fun window_center_mouse(hwnd: i64):
     dolet_window_center_cursor()
 
+# Display scale as a percentage. The Wayland backend does not yet listen for
+# the output scale and X11 is not read for Xft.dpi, so this reports one-to-one
+# rather than guessing. An application that knows better sets it outright
+# through the framework; nothing here pretends to have detected anything.
+fun window_scale_percent() -> i32:
+    return 100
+
 fun window_consume_wheel_delta() -> f32:
     return dolet_window_consume_wheel()
 
