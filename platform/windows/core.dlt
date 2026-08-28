@@ -458,18 +458,40 @@ fun WndProc(hWnd: i64, uMsg: i32, wParam: i64, lParam: i64) -> i64:
 # Display scale as a percentage, 100 being one logical pixel per physical
 # one. Windows reports dots-per-inch for the display a window sits on, and 96
 # is the one-to-one figure.
+# Declare how this process handles a scaled display. Without it Windows
+# reports 96 dots per inch whatever the display is actually set to, then
+# stretches the window's pixels to fill the space — so a framework that asks
+# about the scale gets told there is none, and the result is blurry rather
+# than wrong-sized. It has to happen before the first window exists.
+g_window_dpi_declared: i32 = 0
+
+fun _window_declare_dpi_awareness():
+    if g_window_dpi_declared == 1:
+        return
+    g_window_dpi_declared = 1
+    # Per-monitor v2 first: it follows a window between displays of different
+    # densities. -4 is DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2.
+    if SetProcessDpiAwarenessContext(0 - 4) != 0:
+        return
+    # Older Windows: system-wide awareness, which is one figure for every
+    # display but still the true one.
+    SetProcessDPIAware()
+
+# Display scale as a percentage, 100 being one logical pixel per physical one.
 fun window_scale_percent() -> i32:
     hwnd: i64 = Window.handle()
     if hwnd == 0:
         return 100
-    hdc: i64 = GetDC(hwnd)
-    if hdc == 0:
-        return 100
-    # LOGPIXELSX. The per-monitor call added in Windows 10 is absent from the
-    # import library the toolchain ships, and this one has been present since
-    # long before it.
-    dpi: i32 = GetDeviceCaps(hdc, 88)
-    ReleaseDC(hwnd, hdc)
+    # Per-monitor, so moving between displays of different densities reports
+    # the one the window is actually on.
+    dpi: i32 = GetDpiForWindow(hwnd)
+    if dpi <= 0:
+        # Older Windows: the device context carries the system figure.
+        hdc: i64 = GetDC(hwnd)
+        if hdc == 0:
+            return 100
+        dpi = GetDeviceCaps(hdc, 88)
+        ReleaseDC(hwnd, hdc)
     if dpi <= 0:
         return 100
     return (dpi * 100) / 96
@@ -555,6 +577,7 @@ fun make_empty_wndclassexw() -> WNDCLASSEXW:
 # ----- Window Implementation -----
 attach Window:
     static fun create(title: str, width: i32, height: i32) -> Window:
+        _window_declare_dpi_awareness()
         if width <= 0 or height <= 0:
             g_last_error = WINDOW_ERROR_INVALID_PARAMETER
             return make_empty_window()
